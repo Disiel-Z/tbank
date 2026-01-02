@@ -46,7 +46,8 @@ body{
 .logo{
   width:40px;height:40px;border-radius:14px;
   display:grid;place-items:center;
-  background: linear-gradient(135deg, rgba(76,201,240,.95), rgba(114,9,183,.75));
+  background: #FFD54A;          /* жёлтый */
+  color: #0b1320;               /* тёмный текст */
   box-shadow: 0 10px 26px rgba(0,0,0,.30);
   font-weight:800;
   letter-spacing:.5px;
