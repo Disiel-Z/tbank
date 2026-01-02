@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1320" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Т-банк</title>
+
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">WS</div>
+      <div class="brand-text">
+        <div class="title">Т-банк</div>
+        <div class="subtitle">Ваш мобильный банк</div>
+      </div>
+    </div>
+    <button id="btnExport" class="btn ghost" title="Экспорт JSON">Экспорт</button>
+  </header>
+
+  <main id="app" class="content" aria-live="polite"></main>
+
+  <nav class="tabbar" aria-label="Навигация">
+    <button class="tab active" data-route="accounts">
+      <span class="tab-ico">🏦</span><span class="tab-txt">Счёта</span>
+    </button>
+    <button class="tab" data-route="transfer">
+      <span class="tab-ico">🔁</span><span class="tab-txt">Перевод</span>
+    </button>
+    <button class="tab" data-route="activity">
+      <span class="tab-ico">🧾</span><span class="tab-txt">История</span>
+    </button>
+    <button class="tab" data-route="settings">
+      <span class="tab-ico">⚙️</span><span class="tab-txt">Настройки</span>
+    </button>
+  </nav>
+
+  <input id="fileImport" type="file" accept="application/json" hidden />
+
+  <script src="app.js"></script>
+</body>
+</html>
