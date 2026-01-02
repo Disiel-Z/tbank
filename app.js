@@ -341,7 +341,7 @@ function modalEditBalance(accId) {
   document.getElementById("mOk").onclick = () => {
     const bal = Number(String(document.getElementById("mBal").value).replace(",", "."));
     acc.balance = isFinite(bal) ? bal : acc.balance;
-    pushActivity({ type:"note", title:"Баланс изменён", details: acc.name });
+    pushActivity({ type:"note", title:"Пополнение", details: acc.name });
     saveState(state);
     closeModal();
     render();
