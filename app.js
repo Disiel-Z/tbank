@@ -341,7 +341,7 @@ function modalEditBalance(accId) {
   document.getElementById("mOk").onclick = () => {
     const bal = Number(String(document.getElementById("mBal").value).replace(",", "."));
     acc.balance = isFinite(bal) ? bal : acc.balance;
-    pushActivity({ type:"note", title:"Пополнение", details: acc.name });
+    pushActivity({ type:"note", title:"Баланс изменён", details: acc.name });
     saveState(state);
     closeModal();
     render();
@@ -480,7 +480,6 @@ fileImport.addEventListener("change", async (e) => {
     const obj = JSON.parse(txt);
     if (!obj || !Array.isArray(obj.accounts) || !Array.isArray(obj.activity)) throw new Error("bad");
     state = obj;
-    pushActivity({ type:"note", title:"Импорт выполнен", details:"" });
     saveState(state);
     toast("Импортировано");
     render();
