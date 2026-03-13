@@ -1,5 +1,5 @@
 name = "tbank"
-main = "index.js"
+main = "app.js"
 compatibility_date = "2026-03-13"
 workers_dev = true
 
@@ -11,4 +11,5 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ChatRoom"]
+
 
