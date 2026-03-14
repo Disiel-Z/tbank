@@ -167,75 +167,75 @@ class ChatRoom {
   }
 
   async sendPushToOtherUsers(message) {
-    const publicKey = String(this.env.VAPID_PUBLIC_KEY || "").trim();
-    const privateKey = String(this.env.VAPID_PRIVATE_KEY || "").trim();
+  const publicKey = String(this.env.VAPID_PUBLIC_KEY || "").trim();
+  const privateKey = String(this.env.VAPID_PRIVATE_KEY || "").trim();
 
-    if (!publicKey || !privateKey) {
-      console.log("Push skipped: missing VAPID keys");
-      return;
-    }
-
-    webpush.setVapidDetails(
-      "mailto:admin@example.com",
-      publicKey,
-      privateKey
-    );
-
-    const subscriptions = await this.getSubscriptions();
-    if (!subscriptions.length) return;
-
-    const recipients = subscriptions.filter(
-      (item) =>
-        item?.subscription?.endpoint &&
-        item?.user &&
-        item.user !== message.author
-    );
-
-    if (!recipients.length) return;
-
-    const text = String(message.text || "");
-    const body =
-      text.length > 120
-        ? `${message.author}: ${text.slice(0, 117)}...`
-        : `${message.author}: ${text}`;
-
-    const notificationPayload = JSON.stringify({
-      title: "Т-банк",
-      body,
-      url: "/?route=chat",
-      author: message.author,
-      messageId: message.id
-    });
-
-    const staleEndpoints = new Set();
-
-    await Promise.all(
-      recipients.map(async (item) => {
-        try {
-          await webpush.sendNotification(item.subscription, notificationPayload);
-        } catch (error) {
-          console.log("Push send error:", error?.message || error);
-
-          const statusCode =
-            error?.statusCode ??
-            error?.status ??
-            error?.body?.statusCode ??
-            null;
-
-          if (statusCode === 404 || statusCode === 410) {
-            staleEndpoints.add(item.subscription.endpoint);
-          }
-        }
-      })
-    );
-
-    if (staleEndpoints.size > 0) {
-      const cleaned = subscriptions.filter(
-        (item) => !staleEndpoints.has(item?.subscription?.endpoint)
-      );
-      await this.saveSubscriptions(cleaned);
-    }
+  if (!publicKey || !privateKey) {
+    console.log("Push skipped: missing VAPID keys");
+    return;
   }
+
+  webpush.setVapidDetails(
+    "mailto:admin@example.com",
+    publicKey,
+    privateKey
+  );
+
+  const subscriptions = await this.getSubscriptions();
+  if (!subscriptions.length) return;
+
+  const recipients = subscriptions.filter(
+    (item) =>
+      item?.subscription?.endpoint &&
+      item?.user &&
+      item.user !== message.author
+  );
+
+  if (!recipients.length) return;
+
+  const text = String(message.text || "");
+  const body =
+    text.length > 120
+      ? `${message.author}: ${text.slice(0, 117)}...`
+      : `${message.author}: ${text}`;
+
+  const notificationPayload = JSON.stringify({
+    title: "Т-банк",
+    body,
+    url: "/?route=chat",
+    author: message.author,
+    messageId: message.id
+  });
+
+  const staleEndpoints = new Set();
+
+  await Promise.all(
+    recipients.map(async (item) => {
+      try {
+        await webpush.sendNotification(item.subscription, notificationPayload);
+      } catch (error) {
+        console.log("Push send error:", error?.message || error);
+
+        const statusCode =
+          error?.statusCode ??
+          error?.status ??
+          error?.body?.statusCode ??
+          null;
+
+        if (statusCode === 404 || statusCode === 410) {
+          staleEndpoints.add(item.subscription.endpoint);
+        }
+      }
+    })
+  );
+
+  if (staleEndpoints.size > 0) {
+    const cleaned = subscriptions.filter(
+      (item) => !staleEndpoints.has(item?.subscription?.endpoint)
+    );
+    await this.saveSubscriptions(cleaned.slice(-20));
+  }
+}
 }
 
 async function handleRequest(request, env) {
