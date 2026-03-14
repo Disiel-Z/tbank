@@ -130,41 +130,50 @@ class ChatRoom {
 }
 
   async handleMessage(event, sender) {
-    const raw = String(event.data ?? "");
+  const raw = String(event.data ?? "");
 
-    let payload;
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      payload = {
-        id: crypto.randomUUID(),
-        ts: new Date().toISOString(),
-        author: "Неизвестно",
-        text: raw
-      };
-    }
-
-    if (!payload.id) payload.id = crypto.randomUUID();
-    if (!payload.ts) payload.ts = new Date().toISOString();
-    if (!payload.author) payload.author = "Неизвестно";
-    if (!payload.text) payload.text = "";
-
-    const messages = await this.getMessages();
-    messages.push(payload);
-    await this.saveMessages(messages);
-
-    const outgoing = JSON.stringify(payload);
-
-    for (const session of this.sessions) {
-      try {
-        session.send(outgoing);
-      } catch {
-        this.sessions = this.sessions.filter((s) => s !== session);
-      }
-    }
-
-    await this.sendPushToOtherUsers(payload);
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    payload = {
+      id: crypto.randomUUID(),
+      ts: new Date().toISOString(),
+      author: "Неизвестно",
+      text: raw
+    };
   }
+
+  const author = String(payload.author || "").trim();
+  const text = String(payload.text || "").trim();
+
+  if (!author || !text) {
+    return;
+  }
+
+  const safePayload = {
+    id: String(payload.id || crypto.randomUUID()),
+    ts: String(payload.ts || new Date().toISOString()),
+    author: author.slice(0, 40),
+    text: text.slice(0, 2000)
+  };
+
+  const messages = await this.getMessages();
+  messages.push(safePayload);
+  await this.saveMessages(messages);
+
+  const outgoing = JSON.stringify(safePayload);
+
+  for (const session of this.sessions) {
+    try {
+      session.send(outgoing);
+    } catch {
+      this.sessions = this.sessions.filter((s) => s !== session);
+    }
+  }
+
+  await this.sendPushToOtherUsers(safePayload);
+}
 
   async sendPushToOtherUsers(message) {
   const publicKey = String(this.env.VAPID_PUBLIC_KEY || "").trim();
