@@ -1,5 +1,8 @@
 /* Т-банк
    Локальный кошелёк + встроенный чат через Cloudflare Worker WebSocket + Push.
+   Важно:
+   - импорт/экспорт кошелька = только state/accounts/activity
+   - экспорт чата = только chatMessages
 */
 
 const STORAGE_KEY = "walletSandbox.v1";
@@ -306,7 +309,7 @@ async function sendReadReceipt() {
       if (route === "chat") renderChatMessages();
     }
   } catch {
-    // молча пропускаем, следующая попытка будет позже
+    // следующая попытка будет позже
   } finally {
     readBusy = false;
   }
@@ -633,6 +636,43 @@ function sendChatMessage() {
   input.focus();
 }
 
+function doExport() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "wallet-sandbox-data.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function doChatExportJSON() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    app: "Т-банк",
+    chat: {
+      participants: CHAT_USERS,
+      messages: chatMessages
+    }
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json"
+  });
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const ts = new Date().toISOString().replaceAll(":", "-");
+  a.href = url;
+  a.download = `tbank-chat-export-${ts}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function render() {
   if (route === "accounts") renderAccounts();
   else if (route === "transfer") renderTransfer();
@@ -836,9 +876,12 @@ function renderChat() {
           <textarea id="chatInput" class="input" rows="3" placeholder="Напишите сообщение..." style="resize:vertical;"></textarea>
         </div>
 
-        <div class="grid two">
-          <button class="btn primary" id="btnSendChat">Отправить</button>
-          <button class="btn ghost" id="btnClearChatLocal">Очистить локально</button>
+        <div class="grid">
+          <div class="grid two">
+            <button class="btn primary" id="btnSendChat">Отправить</button>
+            <button class="btn ghost" id="btnClearChatLocal">Очистить локально</button>
+          </div>
+          <button class="btn ghost" id="btnExportChat">Экспорт чата JSON</button>
         </div>
 
         <div class="note">
@@ -869,6 +912,7 @@ function renderChat() {
   });
 
   document.getElementById("btnEnablePush").onclick = () => enablePushNotifications();
+  document.getElementById("btnExportChat").onclick = () => doChatExportJSON();
   document.getElementById("btnSendChat").onclick = () => sendChatMessage();
 
   document.getElementById("chatInput").addEventListener("keydown", (e) => {
@@ -899,11 +943,14 @@ function renderSettings() {
       <div class="grid">
         <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
           <div class="h2">Импорт / Экспорт</div>
-          <div class="small">Перенос данных между устройствами (JSON)</div>
+          <div class="small">Перенос данных приложения и отдельный экспорт переписки</div>
           <div class="hr"></div>
-          <div class="grid two">
-            <button class="btn" id="btnImport">Импорт</button>
-            <button class="btn" id="btnExport2">Экспорт</button>
+          <div class="grid">
+            <div class="grid two">
+              <button class="btn" id="btnImport">Импорт</button>
+              <button class="btn" id="btnExport2">Экспорт кошелька</button>
+            </div>
+            <button class="btn ghost" id="btnExportChatFromSettings">Экспорт чата JSON</button>
           </div>
         </div>
 
@@ -943,6 +990,7 @@ function renderSettings() {
 
   document.getElementById("btnImport").onclick = () => fileImport.click();
   document.getElementById("btnExport2").onclick = () => doExport();
+  document.getElementById("btnExportChatFromSettings").onclick = () => doChatExportJSON();
 
   document.getElementById("btnSaveChatProfile").onclick = () => {
     const val = document.getElementById("settingsChatProfile").value;
@@ -1133,18 +1181,6 @@ function toast(msg) {
 
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.remove(), 1400);
-}
-
-function doExport() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "wallet-sandbox-data.json";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 exportBtn.onclick = () => doExport();
