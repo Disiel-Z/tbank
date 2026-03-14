@@ -152,6 +152,35 @@ function setChatProfile(name) {
   localStorage.setItem(CHAT_DEVICE_USER_KEY, safe);
 }
 
+function ensureChatUserSelected() {
+  const current = getChatProfile();
+  if (current) return;
+
+  showModal(`
+    <div class="h2">Чьё это устройство?</div>
+    <div class="small">Выберите пользователя один раз. Потом выбор сохранится автоматически.</div>
+    <div class="hr"></div>
+    <div class="grid">
+      <button class="btn primary" id="pickEvgeniya">Евгения</button>
+      <button class="btn primary" id="pickAndrey">Андрей</button>
+    </div>
+  `);
+
+  document.getElementById("pickEvgeniya").onclick = () => {
+    setChatProfile("Евгения");
+    closeModal();
+    render();
+    toast("Устройство сохранено за пользователем: Евгения");
+  };
+
+  document.getElementById("pickAndrey").onclick = () => {
+    setChatProfile("Андрей");
+    closeModal();
+    render();
+    toast("Устройство сохранено за пользователем: Андрей");
+  };
+}
+
 function addChatMessage(msg) {
   mergeChatMessages([msg]);
 
@@ -307,6 +336,7 @@ function sendChatMessage() {
   const me = getChatProfile();
   if (!me) {
     toast("Сначала выберите пользователя");
+    ensureChatUserSelected();
     return;
   }
 
@@ -637,6 +667,9 @@ function renderSettings() {
     saveChatMessages();
     toast("Сброшено");
     render();
+    setTimeout(() => {
+      ensureChatUserSelected();
+    }, 0);
   };
 }
 
@@ -865,3 +898,7 @@ window.addEventListener("focus", () => {
 render();
 loadServerChatHistory();
 connectChat();
+
+setTimeout(() => {
+  ensureChatUserSelected();
+}, 0);
