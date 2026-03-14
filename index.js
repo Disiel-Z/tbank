@@ -23,6 +23,26 @@ class ChatRoom {
       });
     }
 
+    if (url.pathname === "/subscribe" && request.method === "POST") {
+      return this.handleSubscribe(request);
+    }
+
+    if (url.pathname === "/subscriptions" && request.method === "GET") {
+      const subs = await this.getSubscriptions();
+      return Response.json(
+        subs.map((s) => ({
+          endpoint: s.subscription?.endpoint || "",
+          user: s.user || "",
+          createdAt: s.createdAt || ""
+        })),
+        {
+          headers: {
+            "cache-control": "no-store"
+          }
+        }
+      );
+    }
+
     if (url.pathname === "/chat") {
       const upgradeHeader = request.headers.get("Upgrade");
 
@@ -64,6 +84,51 @@ class ChatRoom {
 
   async saveMessages(messages) {
     await this.state.storage.put("messages", messages.slice(-100));
+  }
+
+  async getSubscriptions() {
+    const stored = await this.state.storage.get("subscriptions");
+    return Array.isArray(stored) ? stored : [];
+  }
+
+  async saveSubscriptions(subscriptions) {
+    await this.state.storage.put("subscriptions", subscriptions.slice(-20));
+  }
+
+  async handleSubscribe(request) {
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+    }
+
+    const user = String(body?.user || "").trim();
+    const subscription = body?.subscription;
+
+    if (!user) {
+      return Response.json({ ok: false, error: "User is required" }, { status: 400 });
+    }
+
+    if (!subscription || !subscription.endpoint || !subscription.keys?.p256dh || !subscription.keys?.auth) {
+      return Response.json({ ok: false, error: "Invalid subscription payload" }, { status: 400 });
+    }
+
+    const subscriptions = await this.getSubscriptions();
+    const endpoint = subscription.endpoint;
+
+    const filtered = subscriptions.filter((item) => item?.subscription?.endpoint !== endpoint);
+
+    filtered.push({
+      user,
+      createdAt: new Date().toISOString(),
+      subscription
+    });
+
+    await this.saveSubscriptions(filtered);
+
+    return Response.json({ ok: true });
   }
 
   async handleMessage(event, sender) {
@@ -114,6 +179,16 @@ async function handleRequest(request, env) {
     });
   }
 
+  if (url.pathname === "/vapid-public-key") {
+    return new Response(env.VAPID_PUBLIC_KEY || "", {
+      status: 200,
+      headers: {
+        "content-type": "text/plain; charset=UTF-8",
+        "cache-control": "no-store"
+      }
+    });
+  }
+
   const id = env.CHAT_ROOM.idFromName("family-chat");
   const room = env.CHAT_ROOM.get(id);
 
@@ -123,6 +198,14 @@ async function handleRequest(request, env) {
 
   if (url.pathname === "/messages") {
     return room.fetch(new Request("https://room/messages", request));
+  }
+
+  if (url.pathname === "/subscribe") {
+    return room.fetch(new Request("https://room/subscribe", request));
+  }
+
+  if (url.pathname === "/subscriptions") {
+    return room.fetch(new Request("https://room/subscriptions", request));
   }
 
   return new Response("Not found", { status: 404 });
