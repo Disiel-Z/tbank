@@ -5,11 +5,13 @@
 const STORAGE_KEY = "walletSandbox.v1";
 const CHAT_STORAGE_KEY = "walletSandbox.chat.v1";
 const CHAT_WS_URL = "wss://tbank.samuichatgpt.workers.dev/chat";
+const CHAT_HISTORY_URL = "https://tbank.samuichatgpt.workers.dev/messages";
 
 let chatSocket = null;
 let chatConnected = false;
 let chatConnecting = false;
 let chatReconnectTimer = null;
+let chatHistoryLoaded = false;
 
 function uid() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
@@ -74,6 +76,35 @@ function saveChatMessages() {
   localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatMessages.slice(-200)));
 }
 
+function normalizeChatMessage(msg) {
+  return {
+    id: String(msg?.id || uid()),
+    ts: String(msg?.ts || nowISO()),
+    author: String(msg?.author || "Неизвестно"),
+    text: String(msg?.text || "")
+  };
+}
+
+function mergeChatMessages(messages) {
+  const map = new Map();
+
+  for (const item of chatMessages) {
+    const normalized = normalizeChatMessage(item);
+    map.set(normalized.id, normalized);
+  }
+
+  for (const item of messages) {
+    const normalized = normalizeChatMessage(item);
+    map.set(normalized.id, normalized);
+  }
+
+  chatMessages = Array.from(map.values())
+    .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+    .slice(-200);
+
+  saveChatMessages();
+}
+
 let state = loadState();
 let route = "accounts";
 let chatMessages = loadChatMessages();
@@ -121,12 +152,29 @@ function setChatProfile(name) {
 }
 
 function addChatMessage(msg) {
-  chatMessages.push(msg);
-  chatMessages = chatMessages.slice(-200);
-  saveChatMessages();
+  mergeChatMessages([msg]);
 
   if (route === "chat") {
     renderChatMessages();
+  }
+}
+
+async function loadServerChatHistory() {
+  try {
+    const res = await fetch(CHAT_HISTORY_URL, { cache: "no-store" });
+    if (!res.ok) return;
+
+    const data = await res.json();
+    if (!Array.isArray(data)) return;
+
+    mergeChatMessages(data);
+    chatHistoryLoaded = true;
+
+    if (route === "chat") {
+      renderChatMessages();
+    }
+  } catch {
+    // молча оставляем локальную историю
   }
 }
 
@@ -170,6 +218,10 @@ function updateChatStatus() {
   }
   if (chatConnecting) {
     el.textContent = "Подключение к чату...";
+    return;
+  }
+  if (!chatHistoryLoaded) {
+    el.textContent = "Загрузка истории...";
     return;
   }
   el.textContent = "Чат не подключён";
@@ -427,13 +479,14 @@ function renderActivity() {
 
 function renderChat() {
   connectChat();
+  loadServerChatHistory();
 
   appEl.innerHTML = `
     <section class="card">
       <div class="row">
         <div class="col">
           <div class="h1">Семейный чат</div>
-          <div class="small" id="chatStatus">Подключение к чату...</div>
+          <div class="small" id="chatStatus">Загрузка истории...</div>
         </div>
         <button class="btn ghost" id="btnChatReconnect">Обновить</button>
       </div>
@@ -458,7 +511,7 @@ function renderChat() {
         </div>
 
         <div class="note">
-          Переписка работает в реальном времени между двумя устройствами. История пока хранится только локально на каждом устройстве.
+          История теперь подтягивается с сервера. Локальный кеш на устройстве остаётся как резерв.
         </div>
       </div>
     </section>
@@ -467,10 +520,11 @@ function renderChat() {
   updateChatStatus();
   renderChatMessages();
 
-  document.getElementById("btnChatReconnect").onclick = () => {
+  document.getElementById("btnChatReconnect").onclick = async () => {
     try {
       if (chatSocket) chatSocket.close();
     } catch {}
+    await loadServerChatHistory();
     connectChat();
   };
 
@@ -494,7 +548,7 @@ function renderChat() {
     chatMessages = [];
     saveChatMessages();
     renderChatMessages();
-    toast("Локальная история очищена");
+    toast("Локальный кеш очищен");
   };
 }
 
@@ -770,10 +824,18 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-window.addEventListener("online", () => connectChat());
+window.addEventListener("online", () => {
+  loadServerChatHistory();
+  connectChat();
+});
+
 window.addEventListener("focus", () => {
-  if (route === "chat") connectChat();
+  if (route === "chat") {
+    loadServerChatHistory();
+    connectChat();
+  }
 });
 
 render();
+loadServerChatHistory();
 connectChat();
