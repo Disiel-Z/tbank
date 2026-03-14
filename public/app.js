@@ -1,20 +1,27 @@
 /* Т-банк
-   Локальный кошелёк + встроенный чат через Cloudflare Worker WebSocket.
+   Локальный кошелёк + встроенный чат через Cloudflare Worker WebSocket + Push.
 */
 
 const STORAGE_KEY = "walletSandbox.v1";
 const CHAT_STORAGE_KEY = "walletSandbox.chat.v1";
 const CHAT_DEVICE_USER_KEY = "walletSandbox.chatUser";
+
 const CHAT_WS_URL = "wss://tbank.samuichatgpt.workers.dev/chat";
 const CHAT_HISTORY_URL = "https://tbank.samuichatgpt.workers.dev/messages";
+const CHAT_SUBSCRIBE_URL = "https://tbank.samuichatgpt.workers.dev/subscribe";
+const CHAT_VAPID_PUBLIC_KEY_URL = "https://tbank.samuichatgpt.workers.dev/vapid-public-key";
 
 const CHAT_USERS = ["Евгения", "Андрей"];
+const VALID_ROUTES = ["accounts", "transfer", "activity", "chat", "settings"];
 
 let chatSocket = null;
 let chatConnected = false;
 let chatConnecting = false;
 let chatReconnectTimer = null;
 let chatHistoryLoaded = false;
+
+let pushStatusText = "Уведомления не настроены";
+let pushBusy = false;
 
 function uid() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
@@ -107,8 +114,14 @@ function mergeChatMessages(messages) {
   saveChatMessages();
 }
 
+function getInitialRoute() {
+  const routeFromUrl = new URL(location.href).searchParams.get("route");
+  if (VALID_ROUTES.includes(routeFromUrl)) return routeFromUrl;
+  return "accounts";
+}
+
 let state = loadState();
-let route = "accounts";
+let route = getInitialRoute();
 let chatMessages = loadChatMessages();
 
 const appEl = document.getElementById("app");
@@ -263,6 +276,140 @@ function updateChatStatus() {
     return;
   }
   el.textContent = `Чат не подключён · Вы: ${me}`;
+}
+
+function updatePushStatusText(text) {
+  pushStatusText = text;
+
+  const a = document.getElementById("pushStatus");
+  const b = document.getElementById("settingsPushStatus");
+
+  if (a) a.textContent = text;
+  if (b) b.textContent = text;
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replaceAll("-", "+").replaceAll("_", "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+
+async function ensureServiceWorkerReady() {
+  if (!("serviceWorker" in navigator)) {
+    throw new Error("Service Worker не поддерживается");
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  return registration;
+}
+
+async function refreshPushStatus() {
+  try {
+    if (!("Notification" in window)) {
+      updatePushStatusText("Уведомления не поддерживаются");
+      return;
+    }
+
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      updatePushStatusText("Push не поддерживается");
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+
+    if (subscription) {
+      updatePushStatusText("Уведомления включены");
+      return;
+    }
+
+    if (Notification.permission === "denied") {
+      updatePushStatusText("Доступ к уведомлениям запрещён");
+      return;
+    }
+
+    if (Notification.permission === "granted") {
+      updatePushStatusText("Разрешение выдано, подписка не завершена");
+      return;
+    }
+
+    updatePushStatusText("Уведомления выключены");
+  } catch {
+    updatePushStatusText("Статус уведомлений недоступен");
+  }
+}
+
+async function enablePushNotifications() {
+  if (pushBusy) return;
+
+  const me = getChatProfile();
+  if (!me) {
+    toast("Сначала выберите пользователя");
+    ensureChatUserSelected();
+    return;
+  }
+
+  pushBusy = true;
+  updatePushStatusText("Настройка уведомлений...");
+
+  try {
+    if (!("Notification" in window)) {
+      throw new Error("Уведомления не поддерживаются");
+    }
+
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      throw new Error("Push не поддерживается");
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      throw new Error("Разрешение на уведомления не выдано");
+    }
+
+    const registration = await ensureServiceWorkerReady();
+
+    let vapidPublicKey = await fetch(CHAT_VAPID_PUBLIC_KEY_URL, { cache: "no-store" }).then(r => r.text());
+    vapidPublicKey = String(vapidPublicKey || "").trim();
+
+    if (!vapidPublicKey) {
+      throw new Error("Публичный push-ключ пустой");
+    }
+
+    let subscription = await registration.pushManager.getSubscription();
+
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+      });
+    }
+
+    const response = await fetch(CHAT_SUBSCRIBE_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        user: me,
+        subscription
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || !data?.ok) {
+      throw new Error(data?.error || "Не удалось сохранить подписку");
+    }
+
+    updatePushStatusText("Уведомления включены");
+    toast("Уведомления включены");
+  } catch (err) {
+    updatePushStatusText(err?.message || "Не удалось включить уведомления");
+    toast(err?.message || "Не удалось включить уведомления");
+  } finally {
+    pushBusy = false;
+  }
 }
 
 function scheduleChatReconnect() {
@@ -548,6 +695,13 @@ function renderChat() {
           </select>
         </div>
 
+        <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
+          <div class="h2">Уведомления</div>
+          <div class="small" id="pushStatus">${escapeHtml(pushStatusText)}</div>
+          <div class="hr"></div>
+          <button class="btn primary" id="btnEnablePush">Включить уведомления</button>
+        </div>
+
         <div id="chatList" class="card" style="background:rgba(255,255,255,.03); box-shadow:none; min-height:320px; max-height:50vh; overflow:auto;"></div>
 
         <div>
@@ -585,6 +739,7 @@ function renderChat() {
     toast("Пользователь устройства сохранён");
   });
 
+  document.getElementById("btnEnablePush").onclick = () => enablePushNotifications();
   document.getElementById("btnSendChat").onclick = () => sendChatMessage();
 
   document.getElementById("chatInput").addEventListener("keydown", (e) => {
@@ -637,6 +792,13 @@ function renderSettings() {
         </div>
 
         <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
+          <div class="h2">Уведомления</div>
+          <div class="small" id="settingsPushStatus">${escapeHtml(pushStatusText)}</div>
+          <div class="hr"></div>
+          <button class="btn primary" id="btnEnablePushFromSettings">Включить уведомления</button>
+        </div>
+
+        <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
           <div class="h2">Сброс</div>
           <div class="small">Сбросить все настройки</div>
           <div class="hr"></div>
@@ -652,11 +814,15 @@ function renderSettings() {
 
   document.getElementById("btnImport").onclick = () => fileImport.click();
   document.getElementById("btnExport2").onclick = () => doExport();
+
   document.getElementById("btnSaveChatProfile").onclick = () => {
     const val = document.getElementById("settingsChatProfile").value;
     setChatProfile(val);
     toast("Пользователь устройства сохранён");
   };
+
+  document.getElementById("btnEnablePushFromSettings").onclick = () => enablePushNotifications();
+
   document.getElementById("btnReset").onclick = () => {
     if (!confirm("Сбросить данные?")) return;
     localStorage.removeItem(STORAGE_KEY);
@@ -886,6 +1052,7 @@ if ("serviceWorker" in navigator) {
 window.addEventListener("online", () => {
   loadServerChatHistory();
   connectChat();
+  refreshPushStatus();
 });
 
 window.addEventListener("focus", () => {
@@ -893,11 +1060,13 @@ window.addEventListener("focus", () => {
     loadServerChatHistory();
     connectChat();
   }
+  refreshPushStatus();
 });
 
 render();
 loadServerChatHistory();
 connectChat();
+refreshPushStatus();
 
 setTimeout(() => {
   ensureChatUserSelected();
