@@ -2,6 +2,7 @@ name = "tbank"
 main = "index.js"
 compatibility_date = "2026-03-13"
 workers_dev = true
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
 VAPID_PUBLIC_KEY = "BJmawz3aMU2_depsivqiMILKlhD7Vtp_m1fRh-l4sHsNbNEp9B2w61SR5hTk68BERaf-3PkAD1eDeSK_CiR-oSM"
