@@ -29,6 +29,10 @@ class ChatRoom {
       return this.handleSubscribe(request);
     }
 
+    if (url.pathname === "/read" && request.method === "POST") {
+      return this.handleRead(request);
+    }
+
     if (url.pathname === "/chat") {
       const upgradeHeader = request.headers.get("Upgrade");
 
@@ -111,10 +115,7 @@ class ChatRoom {
 
     const filtered = subscriptions.filter((item) => {
       if (!item?.subscription?.endpoint) return false;
-
-      // Убираем старую запись этого же endpoint
       if (item.subscription.endpoint === endpoint) return false;
-
       return true;
     });
 
@@ -129,6 +130,61 @@ class ChatRoom {
     return Response.json({
       ok: true,
       totalSubscriptions: filtered.length
+    });
+  }
+
+  async handleRead(request) {
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+    }
+
+    const reader = String(body?.reader || "").trim();
+    if (!reader) {
+      return Response.json({ ok: false, error: "Reader is required" }, { status: 400 });
+    }
+
+    const messages = await this.getMessages();
+    let changed = false;
+
+    const updated = messages.map((item) => {
+      if (!item?.author || !item?.id) return item;
+
+      if (item.author !== reader && item.status !== "read") {
+        changed = true;
+        return {
+          ...item,
+          status: "read"
+        };
+      }
+
+      return item;
+    });
+
+    if (changed) {
+      await this.saveMessages(updated);
+
+      const outgoing = JSON.stringify({
+        type: "read",
+        reader,
+        status: "read"
+      });
+
+      for (const session of this.sessions) {
+        try {
+          session.send(outgoing);
+        } catch {
+          this.sessions = this.sessions.filter((s) => s !== session);
+        }
+      }
+    }
+
+    return Response.json({
+      ok: true,
+      changed
     });
   }
 
@@ -299,6 +355,10 @@ async function handleRequest(request, env) {
 
   if (url.pathname === "/subscribe") {
     return room.fetch(new Request("https://room/subscribe", request));
+  }
+
+  if (url.pathname === "/read") {
+    return room.fetch(new Request("https://room/read", request));
   }
 
   return new Response("Not found", { status: 404 });
