@@ -90,7 +90,8 @@ function normalizeChatMessage(msg) {
     id: String(msg?.id || uid()),
     ts: String(msg?.ts || nowISO()),
     author: String(msg?.author || "Неизвестно"),
-    text: String(msg?.text || "")
+    text: String(msg?.text || ""),
+    status: String(msg?.status || "")
   };
 }
 
@@ -104,7 +105,13 @@ function mergeChatMessages(messages) {
 
   for (const item of messages) {
     const normalized = normalizeChatMessage(item);
-    map.set(normalized.id, normalized);
+    const prev = map.get(normalized.id);
+
+    map.set(normalized.id, {
+      ...prev,
+      ...normalized,
+      status: normalized.status || prev?.status || ""
+    });
   }
 
   chatMessages = Array.from(map.values())
@@ -112,6 +119,21 @@ function mergeChatMessages(messages) {
     .slice(-200);
 
   saveChatMessages();
+}
+
+function updateMessageStatus(messageId, status) {
+  let changed = false;
+
+  chatMessages = chatMessages.map((item) => {
+    if (item.id !== messageId) return item;
+    changed = true;
+    return { ...item, status };
+  });
+
+  if (changed) {
+    saveChatMessages();
+    if (route === "chat") renderChatMessages();
+  }
 }
 
 function getInitialRoute() {
@@ -130,14 +152,20 @@ const fileImport = document.getElementById("fileImport");
 
 function setRoute(r) {
   route = r;
-  document.querySelectorAll(".tab").forEach(btn => {
+  document.querySelectorAll(".tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.route === r);
   });
+
+  const url = new URL(location.href);
+  if (r === "accounts") url.searchParams.delete("route");
+  else url.searchParams.set("route", r);
+  history.replaceState({}, "", url.toString());
+
   render();
 }
 
 function accountById(id) {
-  return state.accounts.find(a => a.id === id);
+  return state.accounts.find((a) => a.id === id);
 }
 
 function pushActivity(entry) {
@@ -222,6 +250,12 @@ async function loadServerChatHistory() {
   }
 }
 
+function getOwnStatusLabel(status) {
+  if (status === "delivered") return "Доставлено";
+  if (status === "sending") return "Отправляется...";
+  return "";
+}
+
 function renderChatMessages() {
   const list = document.getElementById("chatList");
   if (!list) return;
@@ -233,17 +267,20 @@ function renderChatMessages() {
 
   const me = getChatProfile();
 
-  list.innerHTML = chatMessages.map(item => {
+  list.innerHTML = chatMessages.map((item) => {
     const ts = new Date(item.ts).toLocaleString("ru-RU", {
       dateStyle: "short",
       timeStyle: "short"
     });
     const mine = item.author === me;
+    const ownStatus = mine ? getOwnStatusLabel(item.status) : "";
+
     return `
       <div style="display:flex; ${mine ? "justify-content:flex-end;" : "justify-content:flex-start;"} margin-bottom:10px;">
         <div class="card" style="max-width:82%; padding:10px 12px; background:${mine ? "rgba(76,201,240,.14)" : "rgba(255,255,255,.04)"}; box-shadow:none;">
           <div class="small" style="margin-bottom:6px;"><strong>${escapeHtml(item.author)}</strong> · ${escapeHtml(ts)}</div>
           <div style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(item.text)}</div>
+          ${ownStatus ? `<div class="small" style="margin-top:6px; opacity:.85;">${escapeHtml(ownStatus)}</div>` : ""}
         </div>
       </div>
     `;
@@ -300,8 +337,7 @@ async function ensureServiceWorkerReady() {
     throw new Error("Service Worker не поддерживается");
   }
 
-  const registration = await navigator.serviceWorker.ready;
-  return registration;
+  return navigator.serviceWorker.ready;
 }
 
 async function refreshPushStatus() {
@@ -369,7 +405,7 @@ async function enablePushNotifications() {
 
     const registration = await ensureServiceWorkerReady();
 
-    let vapidPublicKey = await fetch(CHAT_VAPID_PUBLIC_KEY_URL, { cache: "no-store" }).then(r => r.text());
+    let vapidPublicKey = await fetch(CHAT_VAPID_PUBLIC_KEY_URL, { cache: "no-store" }).then((r) => r.text());
     vapidPublicKey = String(vapidPublicKey || "").trim();
 
     if (!vapidPublicKey) {
@@ -444,14 +480,27 @@ function connectChat() {
     chatSocket.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data);
-        if (!parsed || !parsed.text) return;
-        addChatMessage(parsed);
+
+        if (parsed?.type === "ack" && parsed?.id) {
+          updateMessageStatus(parsed.id, parsed.status || "delivered");
+          return;
+        }
+
+        if (parsed?.type === "message" && parsed?.text) {
+          addChatMessage(parsed);
+          return;
+        }
+
+        if (parsed?.text) {
+          addChatMessage(parsed);
+        }
       } catch {
         addChatMessage({
           id: uid(),
           ts: nowISO(),
           author: "Система",
-          text: String(event.data || "")
+          text: String(event.data || ""),
+          status: ""
         });
       }
     };
@@ -500,9 +549,11 @@ function sendChatMessage() {
     id: uid(),
     ts: nowISO(),
     author: me,
-    text
+    text,
+    status: "sending"
   };
 
+  addChatMessage(payload);
   chatSocket.send(JSON.stringify(payload));
   input.value = "";
   input.focus();
@@ -543,7 +594,7 @@ function renderAccounts() {
   `;
 
   const list = document.getElementById("accountsList");
-  list.innerHTML = state.accounts.map(a => `
+  list.innerHTML = state.accounts.map((a) => `
     <div class="item" data-id="${a.id}">
       <div class="left">
         <div class="name">${escapeHtml(a.name)}</div>
@@ -554,13 +605,13 @@ function renderAccounts() {
   `).join("");
 
   document.getElementById("btnAddAccount").onclick = () => modalAddAccount();
-  document.querySelectorAll(".item[data-id]").forEach(el => {
+  document.querySelectorAll(".item[data-id]").forEach((el) => {
     el.onclick = () => modalEditBalance(el.dataset.id);
   });
 }
 
 function renderTransfer() {
-  const opts = state.accounts.map(a => `<option value="${a.id}">${escapeHtml(a.name)} (${fmtMoney(a.balance, a.currency)})</option>`).join("");
+  const opts = state.accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)} (${fmtMoney(a.balance, a.currency)})</option>`).join("");
   appEl.innerHTML = `
     <section class="card">
       <div class="h1">Перевод между счётами</div>
@@ -643,7 +694,7 @@ function renderActivity() {
   if (!state.activity.length) {
     list.innerHTML = `<div class="note">Пока пусто.</div>`;
   } else {
-    list.innerHTML = state.activity.map(e => {
+    list.innerHTML = state.activity.map((e) => {
       const ts = new Date(e.ts).toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" });
       let amtHtml = "";
       if (e.type === "income") amtHtml = `<div class="amt pos">+${fmtMoney(e.amount, e.currency)}</div>`;
@@ -691,7 +742,7 @@ function renderChat() {
           <label>Это устройство принадлежит</label>
           <select id="chatProfile" class="input">
             <option value="">Выберите пользователя</option>
-            ${CHAT_USERS.map(name => `<option value="${escapeHtml(name)}" ${currentUser === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+            ${CHAT_USERS.map((name) => `<option value="${escapeHtml(name)}" ${currentUser === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
           </select>
         </div>
 
@@ -785,7 +836,7 @@ function renderSettings() {
           <label>Выберите пользователя</label>
           <select class="input" id="settingsChatProfile">
             <option value="">Выберите пользователя</option>
-            ${CHAT_USERS.map(name => `<option value="${escapeHtml(name)}" ${currentUser === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+            ${CHAT_USERS.map((name) => `<option value="${escapeHtml(name)}" ${currentUser === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
           </select>
           <div style="height:10px;"></div>
           <button class="btn primary" id="btnSaveChatProfile">Сохранить</button>
@@ -908,7 +959,7 @@ function modalEditBalance(accId) {
 
   document.getElementById("mDel").onclick = () => {
     if (!confirm("Удалить счёт?")) return;
-    state.accounts = state.accounts.filter(a => a.id !== accId);
+    state.accounts = state.accounts.filter((a) => a.id !== accId);
     pushActivity({ type: "note", title: "Счёт удалён", details: acc.name });
     saveState(state);
     closeModal();
@@ -1030,7 +1081,6 @@ fileImport.addEventListener("change", async (e) => {
     state = obj;
     saveState(state);
     toast("Импортировано");
-    render();
     setRoute("accounts");
   } catch {
     toast("Не удалось импортировать JSON");
@@ -1039,7 +1089,7 @@ fileImport.addEventListener("change", async (e) => {
   }
 });
 
-document.querySelectorAll(".tab").forEach(btn => {
+document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => setRoute(btn.dataset.route));
 });
 
