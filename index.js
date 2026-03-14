@@ -29,21 +29,6 @@ class ChatRoom {
       return this.handleSubscribe(request);
     }
 
-    if (url.pathname === "/subscriptions" && request.method === "GET") {
-      const subs = await this.getSubscriptions();
-      return Response.json(
-        subs.map((s) => ({
-          endpoint: s.subscription?.endpoint || "",
-          user: s.user || "",
-          createdAt: s.createdAt || ""
-        })),
-        {
-          headers: {
-            "cache-control": "no-store"
-          }
-        }
-      );
-    }
 
     if (url.pathname === "/chat") {
       const upgradeHeader = request.headers.get("Upgrade");
@@ -279,9 +264,6 @@ async function handleRequest(request, env) {
     return room.fetch(new Request("https://room/subscribe", request));
   }
 
-  if (url.pathname === "/subscriptions") {
-    return room.fetch(new Request("https://room/subscriptions", request));
-  }
 
   return new Response("Not found", { status: 404 });
 }
