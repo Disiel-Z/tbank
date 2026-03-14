@@ -4,8 +4,11 @@
 
 const STORAGE_KEY = "walletSandbox.v1";
 const CHAT_STORAGE_KEY = "walletSandbox.chat.v1";
+const CHAT_DEVICE_USER_KEY = "walletSandbox.chatUser";
 const CHAT_WS_URL = "wss://tbank.samuichatgpt.workers.dev/chat";
 const CHAT_HISTORY_URL = "https://tbank.samuichatgpt.workers.dev/messages";
+
+const CHAT_USERS = ["Евгения", "Андрей"];
 
 let chatSocket = null;
 let chatConnected = false;
@@ -50,8 +53,7 @@ function seedState() {
       { id: uid(), ts: nowISO(), type: "note", title: "Добро пожаловать", details: "Добро пожаловать в Ваш новый мобильный банк" }
     ],
     settings: {
-      haptics: false,
-      chatProfile: localStorage.getItem("walletSandbox.chatProfile") || "Я"
+      haptics: false
     }
   };
   saveState(state);
@@ -139,16 +141,15 @@ function escapeHtml(s) {
 }
 
 function getChatProfile() {
-  const name = state.settings?.chatProfile || localStorage.getItem("walletSandbox.chatProfile") || "Я";
-  return String(name).trim() || "Я";
+  const saved = localStorage.getItem(CHAT_DEVICE_USER_KEY);
+  if (CHAT_USERS.includes(saved)) return saved;
+  return "";
 }
 
 function setChatProfile(name) {
-  const safe = String(name || "").trim() || "Я";
-  state.settings = state.settings || {};
-  state.settings.chatProfile = safe;
-  localStorage.setItem("walletSandbox.chatProfile", safe);
-  saveState(state);
+  const safe = CHAT_USERS.includes(name) ? name : "";
+  if (!safe) return;
+  localStorage.setItem(CHAT_DEVICE_USER_KEY, safe);
 }
 
 function addChatMessage(msg) {
@@ -172,9 +173,10 @@ async function loadServerChatHistory() {
 
     if (route === "chat") {
       renderChatMessages();
+      updateChatStatus();
     }
   } catch {
-    // молча оставляем локальную историю
+    // оставляем локальную историю
   }
 }
 
@@ -212,19 +214,26 @@ function updateChatStatus() {
   const el = document.getElementById("chatStatus");
   if (!el) return;
 
+  const me = getChatProfile();
+
+  if (!me) {
+    el.textContent = "Выберите пользователя для этого устройства";
+    return;
+  }
+
   if (chatConnected) {
-    el.textContent = "Чат подключён";
+    el.textContent = `Чат подключён · Вы: ${me}`;
     return;
   }
   if (chatConnecting) {
-    el.textContent = "Подключение к чату...";
+    el.textContent = `Подключение к чату... · Вы: ${me}`;
     return;
   }
   if (!chatHistoryLoaded) {
-    el.textContent = "Загрузка истории...";
+    el.textContent = `Загрузка истории... · Вы: ${me}`;
     return;
   }
-  el.textContent = "Чат не подключён";
+  el.textContent = `Чат не подключён · Вы: ${me}`;
 }
 
 function scheduleChatReconnect() {
@@ -295,6 +304,12 @@ function sendChatMessage() {
   const input = document.getElementById("chatInput");
   if (!input) return;
 
+  const me = getChatProfile();
+  if (!me) {
+    toast("Сначала выберите пользователя");
+    return;
+  }
+
   const text = (input.value || "").trim();
   if (!text) return;
 
@@ -307,7 +322,7 @@ function sendChatMessage() {
   const payload = {
     id: uid(),
     ts: nowISO(),
-    author: getChatProfile(),
+    author: me,
     text
   };
 
@@ -481,6 +496,8 @@ function renderChat() {
   connectChat();
   loadServerChatHistory();
 
+  const currentUser = getChatProfile();
+
   appEl.innerHTML = `
     <section class="card">
       <div class="row">
@@ -494,8 +511,11 @@ function renderChat() {
 
       <div class="grid">
         <div>
-          <label>Ваше имя в чате</label>
-          <input class="input" id="chatProfile" placeholder="Например: Женя" value="${escapeHtml(getChatProfile())}" />
+          <label>Это устройство принадлежит</label>
+          <select id="chatProfile" class="input">
+            <option value="">Выберите пользователя</option>
+            ${CHAT_USERS.map(name => `<option value="${escapeHtml(name)}" ${currentUser === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+          </select>
         </div>
 
         <div id="chatList" class="card" style="background:rgba(255,255,255,.03); box-shadow:none; min-height:320px; max-height:50vh; overflow:auto;"></div>
@@ -511,7 +531,7 @@ function renderChat() {
         </div>
 
         <div class="note">
-          История теперь подтягивается с сервера. Локальный кеш на устройстве остаётся как резерв.
+          В этой версии доступны два фиксированных участника: Евгения и Андрей.
         </div>
       </div>
     </section>
@@ -530,8 +550,9 @@ function renderChat() {
 
   document.getElementById("chatProfile").addEventListener("change", (e) => {
     setChatProfile(e.target.value);
-    toast("Имя в чате сохранено");
+    updateChatStatus();
     renderChatMessages();
+    toast("Пользователь устройства сохранён");
   });
 
   document.getElementById("btnSendChat").onclick = () => sendChatMessage();
@@ -553,6 +574,8 @@ function renderChat() {
 }
 
 function renderSettings() {
+  const currentUser = getChatProfile();
+
   appEl.innerHTML = `
     <section class="card">
       <div class="h1">Настройки</div>
@@ -571,13 +594,16 @@ function renderSettings() {
         </div>
 
         <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
-          <div class="h2">Чат</div>
-          <div class="small">Имя, которое будет показываться в семейном чате</div>
+          <div class="h2">Пользователь чата</div>
+          <div class="small">Кто использует это устройство</div>
           <div class="hr"></div>
-          <label>Имя в чате</label>
-          <input class="input" id="settingsChatProfile" value="${escapeHtml(getChatProfile())}" placeholder="Например: Женя" />
+          <label>Выберите пользователя</label>
+          <select class="input" id="settingsChatProfile">
+            <option value="">Выберите пользователя</option>
+            ${CHAT_USERS.map(name => `<option value="${escapeHtml(name)}" ${currentUser === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+          </select>
           <div style="height:10px;"></div>
-          <button class="btn primary" id="btnSaveChatProfile">Сохранить имя</button>
+          <button class="btn primary" id="btnSaveChatProfile">Сохранить</button>
         </div>
 
         <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
@@ -599,13 +625,13 @@ function renderSettings() {
   document.getElementById("btnSaveChatProfile").onclick = () => {
     const val = document.getElementById("settingsChatProfile").value;
     setChatProfile(val);
-    toast("Имя чата сохранено");
+    toast("Пользователь устройства сохранён");
   };
   document.getElementById("btnReset").onclick = () => {
     if (!confirm("Сбросить данные?")) return;
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(CHAT_STORAGE_KEY);
-    localStorage.removeItem("walletSandbox.chatProfile");
+    localStorage.removeItem(CHAT_DEVICE_USER_KEY);
     state = seedState();
     chatMessages = [];
     saveChatMessages();
