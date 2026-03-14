@@ -83,40 +83,51 @@ class ChatRoom {
   }
 
   async handleSubscribe(request) {
-    let body;
+  let body;
 
-    try {
-      body = await request.json();
-    } catch {
-      return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
-    }
-
-    const user = String(body?.user || "").trim();
-    const subscription = body?.subscription;
-
-    if (!user) {
-      return Response.json({ ok: false, error: "User is required" }, { status: 400 });
-    }
-
-    if (!subscription || !subscription.endpoint || !subscription.keys?.p256dh || !subscription.keys?.auth) {
-      return Response.json({ ok: false, error: "Invalid subscription payload" }, { status: 400 });
-    }
-
-    const subscriptions = await this.getSubscriptions();
-    const endpoint = subscription.endpoint;
-
-    const filtered = subscriptions.filter((item) => item?.subscription?.endpoint !== endpoint);
-
-    filtered.push({
-      user,
-      createdAt: new Date().toISOString(),
-      subscription
-    });
-
-    await this.saveSubscriptions(filtered);
-
-    return Response.json({ ok: true });
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
   }
+
+  const user = String(body?.user || "").trim();
+  const subscription = body?.subscription;
+
+  if (!user) {
+    return Response.json({ ok: false, error: "User is required" }, { status: 400 });
+  }
+
+  if (!subscription || !subscription.endpoint || !subscription.keys?.p256dh || !subscription.keys?.auth) {
+    return Response.json({ ok: false, error: "Invalid subscription payload" }, { status: 400 });
+  }
+
+  const subscriptions = await this.getSubscriptions();
+  const endpoint = subscription.endpoint;
+
+  const filtered = subscriptions.filter((item) => {
+    if (!item?.subscription?.endpoint) return false;
+
+    // Удаляем старую запись того же endpoint
+    if (item.subscription.endpoint === endpoint) return false;
+
+    // У пользователя должно остаться только одно актуальное устройство на один endpoint
+    return true;
+  });
+
+  filtered.push({
+    user,
+    createdAt: new Date().toISOString(),
+    subscription
+  });
+
+  await this.saveSubscriptions(filtered.slice(-20));
+
+  return Response.json({
+    ok: true,
+    totalSubscriptions: filtered.length
+  });
+}
 
   async handleMessage(event, sender) {
     const raw = String(event.data ?? "");
