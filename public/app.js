@@ -10,6 +10,7 @@ const CHAT_WS_URL = "wss://tbank.samuichatgpt.workers.dev/chat";
 const CHAT_HISTORY_URL = "https://tbank.samuichatgpt.workers.dev/messages";
 const CHAT_SUBSCRIBE_URL = "https://tbank.samuichatgpt.workers.dev/subscribe";
 const CHAT_VAPID_PUBLIC_KEY_URL = "https://tbank.samuichatgpt.workers.dev/vapid-public-key";
+const CHAT_READ_URL = "https://tbank.samuichatgpt.workers.dev/read";
 
 const CHAT_USERS = ["Евгения", "Андрей"];
 const VALID_ROUTES = ["accounts", "transfer", "activity", "chat", "settings"];
@@ -22,6 +23,7 @@ let chatHistoryLoaded = false;
 
 let pushStatusText = "Уведомления не настроены";
 let pushBusy = false;
+let readBusy = false;
 
 function uid() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
@@ -128,6 +130,26 @@ function updateMessageStatus(messageId, status) {
     if (item.id !== messageId) return item;
     changed = true;
     return { ...item, status };
+  });
+
+  if (changed) {
+    saveChatMessages();
+    if (route === "chat") renderChatMessages();
+  }
+}
+
+function markMessagesReadByOtherUser(reader) {
+  const me = getChatProfile();
+  if (!reader || !me || reader === me) return;
+
+  let changed = false;
+
+  chatMessages = chatMessages.map((item) => {
+    if (item.author === me && item.status !== "read") {
+      changed = true;
+      return { ...item, status: "read" };
+    }
+    return item;
   });
 
   if (changed) {
@@ -250,7 +272,48 @@ async function loadServerChatHistory() {
   }
 }
 
+async function sendReadReceipt() {
+  const reader = getChatProfile();
+  if (!reader || readBusy) return;
+
+  const hasUnreadForeign = chatMessages.some(
+    (item) => item.author !== reader && item.status !== "read"
+  );
+
+  if (!hasUnreadForeign) return;
+
+  readBusy = true;
+
+  try {
+    const response = await fetch(CHAT_READ_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ reader })
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (response.ok && data?.ok) {
+      chatMessages = chatMessages.map((item) => {
+        if (item.author !== reader) {
+          return { ...item, status: "read" };
+        }
+        return item;
+      });
+      saveChatMessages();
+      if (route === "chat") renderChatMessages();
+    }
+  } catch {
+    // молча пропускаем, следующая попытка будет позже
+  } finally {
+    readBusy = false;
+  }
+}
+
 function getOwnStatusLabel(status) {
+  if (status === "read") return "Прочитано";
   if (status === "delivered") return "Доставлено";
   if (status === "sending") return "Отправляется...";
   return "";
@@ -486,13 +549,24 @@ function connectChat() {
           return;
         }
 
+        if (parsed?.type === "read" && parsed?.reader) {
+          markMessagesReadByOtherUser(parsed.reader);
+          return;
+        }
+
         if (parsed?.type === "message" && parsed?.text) {
           addChatMessage(parsed);
+          if (route === "chat") {
+            sendReadReceipt();
+          }
           return;
         }
 
         if (parsed?.text) {
           addChatMessage(parsed);
+          if (route === "chat") {
+            sendReadReceipt();
+          }
         }
       } catch {
         addChatMessage({
@@ -722,7 +796,9 @@ function renderActivity() {
 
 function renderChat() {
   connectChat();
-  loadServerChatHistory();
+  loadServerChatHistory().then(() => {
+    sendReadReceipt();
+  });
 
   const currentUser = getChatProfile();
 
@@ -781,6 +857,7 @@ function renderChat() {
     } catch {}
     await loadServerChatHistory();
     connectChat();
+    await sendReadReceipt();
   };
 
   document.getElementById("chatProfile").addEventListener("change", (e) => {
@@ -788,6 +865,7 @@ function renderChat() {
     updateChatStatus();
     renderChatMessages();
     toast("Пользователь устройства сохранён");
+    sendReadReceipt();
   });
 
   document.getElementById("btnEnablePush").onclick = () => enablePushNotifications();
@@ -1103,11 +1181,14 @@ window.addEventListener("online", () => {
   loadServerChatHistory();
   connectChat();
   refreshPushStatus();
+  if (route === "chat") sendReadReceipt();
 });
 
 window.addEventListener("focus", () => {
   if (route === "chat") {
-    loadServerChatHistory();
+    loadServerChatHistory().then(() => {
+      sendReadReceipt();
+    });
     connectChat();
   }
   refreshPushStatus();
@@ -1120,4 +1201,7 @@ refreshPushStatus();
 
 setTimeout(() => {
   ensureChatUserSelected();
+  if (route === "chat") {
+    sendReadReceipt();
+  }
 }, 0);
