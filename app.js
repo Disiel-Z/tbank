@@ -1,15 +1,21 @@
 /* Т-банк
-   Без авторизации, без сервера.
-   Данные хранятся локально (localStorage), можно экспортировать/импортировать JSON.
+   Локальный кошелёк + встроенный чат через Cloudflare Worker WebSocket.
 */
 
 const STORAGE_KEY = "walletSandbox.v1";
+const CHAT_STORAGE_KEY = "walletSandbox.chat.v1";
+const CHAT_WS_URL = "wss://tbank.samuichatgpt.workers.dev/chat";
+
+let chatSocket = null;
+let chatConnected = false;
+let chatConnecting = false;
+let chatReconnectTimer = null;
 
 function uid() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
 }
 
-function fmtMoney(n, currency="₽") {
+function fmtMoney(n, currency = "₽") {
   const num = Number(n || 0);
   const sign = num < 0 ? "-" : "";
   const abs = Math.abs(num);
@@ -25,7 +31,6 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return seedState();
     const parsed = JSON.parse(raw);
-    // простая валидация
     if (!parsed || !Array.isArray(parsed.accounts) || !Array.isArray(parsed.activity)) return seedState();
     return parsed;
   } catch {
@@ -42,7 +47,10 @@ function seedState() {
     activity: [
       { id: uid(), ts: nowISO(), type: "note", title: "Добро пожаловать", details: "Добро пожаловать в Ваш новый мобильный банк" }
     ],
-    settings: { haptics: false }
+    settings: {
+      haptics: false,
+      chatProfile: localStorage.getItem("walletSandbox.chatProfile") || "Я"
+    }
   };
   saveState(state);
   return state;
@@ -52,8 +60,23 @@ function saveState(state) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function loadChatMessages() {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveChatMessages() {
+  localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatMessages.slice(-200)));
+}
+
 let state = loadState();
 let route = "accounts";
+let chatMessages = loadChatMessages();
 
 const appEl = document.getElementById("app");
 const exportBtn = document.getElementById("btnExport");
@@ -75,15 +98,182 @@ function pushActivity(entry) {
   state.activity.unshift({ id: uid(), ts: nowISO(), ...entry });
 }
 
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function getChatProfile() {
+  const name = state.settings?.chatProfile || localStorage.getItem("walletSandbox.chatProfile") || "Я";
+  return String(name).trim() || "Я";
+}
+
+function setChatProfile(name) {
+  const safe = String(name || "").trim() || "Я";
+  state.settings = state.settings || {};
+  state.settings.chatProfile = safe;
+  localStorage.setItem("walletSandbox.chatProfile", safe);
+  saveState(state);
+}
+
+function addChatMessage(msg) {
+  chatMessages.push(msg);
+  chatMessages = chatMessages.slice(-200);
+  saveChatMessages();
+
+  if (route === "chat") {
+    renderChatMessages();
+  }
+}
+
+function renderChatMessages() {
+  const list = document.getElementById("chatList");
+  if (!list) return;
+
+  if (!chatMessages.length) {
+    list.innerHTML = `<div class="note">Сообщений пока нет.</div>`;
+    return;
+  }
+
+  const me = getChatProfile();
+
+  list.innerHTML = chatMessages.map(item => {
+    const ts = new Date(item.ts).toLocaleString("ru-RU", {
+      dateStyle: "short",
+      timeStyle: "short"
+    });
+    const mine = item.author === me;
+    return `
+      <div style="display:flex; ${mine ? "justify-content:flex-end;" : "justify-content:flex-start;"} margin-bottom:10px;">
+        <div class="card" style="max-width:82%; padding:10px 12px; background:${mine ? "rgba(76,201,240,.14)" : "rgba(255,255,255,.04)"}; box-shadow:none;">
+          <div class="small" style="margin-bottom:6px;"><strong>${escapeHtml(item.author)}</strong> · ${escapeHtml(ts)}</div>
+          <div style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(item.text)}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  list.scrollTop = list.scrollHeight;
+}
+
+function updateChatStatus() {
+  const el = document.getElementById("chatStatus");
+  if (!el) return;
+
+  if (chatConnected) {
+    el.textContent = "Чат подключён";
+    return;
+  }
+  if (chatConnecting) {
+    el.textContent = "Подключение к чату...";
+    return;
+  }
+  el.textContent = "Чат не подключён";
+}
+
+function scheduleChatReconnect() {
+  if (chatReconnectTimer) return;
+  chatReconnectTimer = setTimeout(() => {
+    chatReconnectTimer = null;
+    connectChat();
+  }, 2000);
+}
+
+function connectChat() {
+  if (chatSocket && (chatSocket.readyState === WebSocket.OPEN || chatSocket.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  chatConnecting = true;
+  chatConnected = false;
+  updateChatStatus();
+
+  try {
+    chatSocket = new WebSocket(CHAT_WS_URL);
+
+    chatSocket.onopen = () => {
+      chatConnecting = false;
+      chatConnected = true;
+      updateChatStatus();
+      if (route === "chat") {
+        toast("Чат подключён");
+      }
+    };
+
+    chatSocket.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        if (!parsed || !parsed.text) return;
+        addChatMessage(parsed);
+      } catch {
+        addChatMessage({
+          id: uid(),
+          ts: nowISO(),
+          author: "Система",
+          text: String(event.data || "")
+        });
+      }
+    };
+
+    chatSocket.onerror = () => {
+      chatConnecting = false;
+      chatConnected = false;
+      updateChatStatus();
+    };
+
+    chatSocket.onclose = () => {
+      chatConnecting = false;
+      chatConnected = false;
+      updateChatStatus();
+      scheduleChatReconnect();
+    };
+  } catch {
+    chatConnecting = false;
+    chatConnected = false;
+    updateChatStatus();
+    scheduleChatReconnect();
+  }
+}
+
+function sendChatMessage() {
+  const input = document.getElementById("chatInput");
+  if (!input) return;
+
+  const text = (input.value || "").trim();
+  if (!text) return;
+
+  if (!chatSocket || chatSocket.readyState !== WebSocket.OPEN) {
+    toast("Чат ещё не подключён");
+    connectChat();
+    return;
+  }
+
+  const payload = {
+    id: uid(),
+    ts: nowISO(),
+    author: getChatProfile(),
+    text
+  };
+
+  chatSocket.send(JSON.stringify(payload));
+  input.value = "";
+  input.focus();
+}
+
 function render() {
   if (route === "accounts") renderAccounts();
   else if (route === "transfer") renderTransfer();
   else if (route === "activity") renderActivity();
+  else if (route === "chat") renderChat();
   else if (route === "settings") renderSettings();
 }
 
 function renderAccounts() {
-  const total = state.accounts.reduce((s,a)=> s + Number(a.balance||0), 0);
+  const total = state.accounts.reduce((s, a) => s + Number(a.balance || 0), 0);
   appEl.innerHTML = `
     <section class="card">
       <div class="row">
@@ -113,7 +303,7 @@ function renderAccounts() {
     <div class="item" data-id="${a.id}">
       <div class="left">
         <div class="name">${escapeHtml(a.name)}</div>
-        <div class="meta">Валюта: ${escapeHtml(a.currency)} · ID: ${a.id.slice(0,6)}…</div>
+        <div class="meta">Валюта: ${escapeHtml(a.currency)} · ID: ${a.id.slice(0, 6)}…</div>
       </div>
       <div class="amt">${fmtMoney(a.balance, a.currency)}</div>
     </div>
@@ -126,7 +316,7 @@ function renderAccounts() {
 }
 
 function renderTransfer() {
-  const opts = state.accounts.map(a => `<option value="${a.id}">${escapeHtml(a.name)} (${fmtMoney(a.balance,a.currency)})</option>`).join("");
+  const opts = state.accounts.map(a => `<option value="${a.id}">${escapeHtml(a.name)} (${fmtMoney(a.balance, a.currency)})</option>`).join("");
   appEl.innerHTML = `
     <section class="card">
       <div class="h1">Перевод между счётами</div>
@@ -159,7 +349,6 @@ function renderTransfer() {
         <button class="btn danger" id="btnExpense">− Расход</button>
       </div>
     </section>
-
   `;
 
   document.getElementById("btnIncome").onclick = () => modalQuickEntry("income");
@@ -177,7 +366,6 @@ function renderTransfer() {
     const to = accountById(toId);
     if (!from || !to) return toast("Счёт не найден");
 
-    // В демо допускаем разную “валюту”, но переводим как число.
     from.balance = Number(from.balance || 0) - amt;
     to.balance = Number(to.balance || 0) + amt;
 
@@ -212,7 +400,7 @@ function renderActivity() {
     list.innerHTML = `<div class="note">Пока пусто.</div>`;
   } else {
     list.innerHTML = state.activity.map(e => {
-      const ts = new Date(e.ts).toLocaleString("ru-RU", { dateStyle:"medium", timeStyle:"short" });
+      const ts = new Date(e.ts).toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" });
       let amtHtml = "";
       if (e.type === "income") amtHtml = `<div class="amt pos">+${fmtMoney(e.amount, e.currency)}</div>`;
       if (e.type === "expense") amtHtml = `<div class="amt neg">-${fmtMoney(e.amount, e.currency)}</div>`;
@@ -231,9 +419,82 @@ function renderActivity() {
 
   document.getElementById("btnClearActivity").onclick = () => {
     state.activity = [];
-    pushActivity({ type:"note", title:"История очищена", details:"" });
+    pushActivity({ type: "note", title: "История очищена", details: "" });
     saveState(state);
     render();
+  };
+}
+
+function renderChat() {
+  connectChat();
+
+  appEl.innerHTML = `
+    <section class="card">
+      <div class="row">
+        <div class="col">
+          <div class="h1">Семейный чат</div>
+          <div class="small" id="chatStatus">Подключение к чату...</div>
+        </div>
+        <button class="btn ghost" id="btnChatReconnect">Обновить</button>
+      </div>
+      <div class="hr"></div>
+
+      <div class="grid">
+        <div>
+          <label>Ваше имя в чате</label>
+          <input class="input" id="chatProfile" placeholder="Например: Женя" value="${escapeHtml(getChatProfile())}" />
+        </div>
+
+        <div id="chatList" class="card" style="background:rgba(255,255,255,.03); box-shadow:none; min-height:320px; max-height:50vh; overflow:auto;"></div>
+
+        <div>
+          <label>Сообщение</label>
+          <textarea id="chatInput" class="input" rows="3" placeholder="Напишите сообщение..." style="resize:vertical;"></textarea>
+        </div>
+
+        <div class="grid two">
+          <button class="btn primary" id="btnSendChat">Отправить</button>
+          <button class="btn ghost" id="btnClearChatLocal">Очистить локально</button>
+        </div>
+
+        <div class="note">
+          Переписка работает в реальном времени между двумя устройствами. История пока хранится только локально на каждом устройстве.
+        </div>
+      </div>
+    </section>
+  `;
+
+  updateChatStatus();
+  renderChatMessages();
+
+  document.getElementById("btnChatReconnect").onclick = () => {
+    try {
+      if (chatSocket) chatSocket.close();
+    } catch {}
+    connectChat();
+  };
+
+  document.getElementById("chatProfile").addEventListener("change", (e) => {
+    setChatProfile(e.target.value);
+    toast("Имя в чате сохранено");
+    renderChatMessages();
+  });
+
+  document.getElementById("btnSendChat").onclick = () => sendChatMessage();
+
+  document.getElementById("chatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+
+  document.getElementById("btnClearChatLocal").onclick = () => {
+    if (!confirm("Очистить локальную историю чата на этом устройстве?")) return;
+    chatMessages = [];
+    saveChatMessages();
+    renderChatMessages();
+    toast("Локальная история очищена");
   };
 }
 
@@ -256,6 +517,16 @@ function renderSettings() {
         </div>
 
         <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
+          <div class="h2">Чат</div>
+          <div class="small">Имя, которое будет показываться в семейном чате</div>
+          <div class="hr"></div>
+          <label>Имя в чате</label>
+          <input class="input" id="settingsChatProfile" value="${escapeHtml(getChatProfile())}" placeholder="Например: Женя" />
+          <div style="height:10px;"></div>
+          <button class="btn primary" id="btnSaveChatProfile">Сохранить имя</button>
+        </div>
+
+        <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
           <div class="h2">Сброс</div>
           <div class="small">Сбросить все настройки</div>
           <div class="hr"></div>
@@ -263,7 +534,7 @@ function renderSettings() {
         </div>
 
         <div class="note">
-          <strong>Важно:</strong> версия 1.025.34 - следите за обновлениями.
+          <strong>Важно:</strong> версия 1.025.34 — следите за обновлениями.
         </div>
       </div>
     </section>
@@ -271,10 +542,19 @@ function renderSettings() {
 
   document.getElementById("btnImport").onclick = () => fileImport.click();
   document.getElementById("btnExport2").onclick = () => doExport();
+  document.getElementById("btnSaveChatProfile").onclick = () => {
+    const val = document.getElementById("settingsChatProfile").value;
+    setChatProfile(val);
+    toast("Имя чата сохранено");
+  };
   document.getElementById("btnReset").onclick = () => {
     if (!confirm("Сбросить данные?")) return;
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(CHAT_STORAGE_KEY);
+    localStorage.removeItem("walletSandbox.chatProfile");
     state = seedState();
+    chatMessages = [];
+    saveChatMessages();
     toast("Сброшено");
     render();
   };
@@ -308,7 +588,7 @@ function modalAddAccount() {
     const currency = (document.getElementById("mCur").value || "₽").trim() || "₽";
     const bal = Number(String(document.getElementById("mBal").value).replace(",", "."));
     state.accounts.push({ id: uid(), name, currency, balance: isFinite(bal) ? bal : 0 });
-    pushActivity({ type:"note", title:"Создан счёт", details: name });
+    pushActivity({ type: "note", title: "Создан счёт", details: name });
     saveState(state);
     closeModal();
     render();
@@ -341,7 +621,7 @@ function modalEditBalance(accId) {
   document.getElementById("mOk").onclick = () => {
     const bal = Number(String(document.getElementById("mBal").value).replace(",", "."));
     acc.balance = isFinite(bal) ? bal : acc.balance;
-    pushActivity({ type:"note", title:"Баланс изменён", details: acc.name });
+    pushActivity({ type: "note", title: "Баланс изменён", details: acc.name });
     saveState(state);
     closeModal();
     render();
@@ -350,7 +630,7 @@ function modalEditBalance(accId) {
   document.getElementById("mDel").onclick = () => {
     if (!confirm("Удалить счёт?")) return;
     state.accounts = state.accounts.filter(a => a.id !== accId);
-    pushActivity({ type:"note", title:"Счёт удалён", details: acc.name });
+    pushActivity({ type: "note", title: "Счёт удалён", details: acc.name });
     saveState(state);
     closeModal();
     render();
@@ -398,8 +678,6 @@ function modalQuickEntry(kind) {
   };
   document.getElementById("mCancel").onclick = closeModal;
 }
-
-/* ===== modal/toast helpers ===== */
 
 let modalEl = null;
 function showModal(innerHtml) {
@@ -449,15 +727,6 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.remove(), 1400);
 }
 
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&","&amp;").replaceAll("<","&lt;")
-    .replaceAll(">","&gt;").replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
-
-/* ===== export/import ===== */
-
 function doExport() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -491,18 +760,20 @@ fileImport.addEventListener("change", async (e) => {
   }
 });
 
-/* ===== tab wiring ===== */
-
 document.querySelectorAll(".tab").forEach(btn => {
   btn.addEventListener("click", () => setRoute(btn.dataset.route));
 });
 
-/* ===== PWA service worker ===== */
-
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch(()=>{});
+    navigator.serviceWorker.register("./service-worker.js").catch(() => {});
   });
 }
 
+window.addEventListener("online", () => connectChat());
+window.addEventListener("focus", () => {
+  if (route === "chat") connectChat();
+});
+
 render();
+connectChat();
