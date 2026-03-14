@@ -12,40 +12,89 @@ class ChatRoom {
   }
 
   async fetch(request) {
-    const upgradeHeader = request.headers.get("Upgrade");
+    const url = new URL(request.url);
 
-    if (upgradeHeader !== "websocket") {
-      return new Response("Expected WebSocket", { status: 400 });
+    if (url.pathname === "/messages" && request.method === "GET") {
+      const messages = await this.getMessages();
+      return Response.json(messages, {
+        headers: {
+          "cache-control": "no-store"
+        }
+      });
     }
 
-    const webSocketPair = new WebSocketPair();
-    const [client, server] = Object.values(webSocketPair);
+    if (url.pathname === "/chat") {
+      const upgradeHeader = request.headers.get("Upgrade");
 
-    server.accept();
-    this.sessions.push(server);
+      if (upgradeHeader !== "websocket") {
+        return new Response("Expected WebSocket", { status: 400 });
+      }
 
-    server.addEventListener("message", (event) => this.handleMessage(event, server));
+      const webSocketPair = new WebSocketPair();
+      const [client, server] = Object.values(webSocketPair);
 
-    server.addEventListener("close", () => {
-      this.sessions = this.sessions.filter((s) => s !== server);
-    });
+      server.accept();
+      this.sessions.push(server);
 
-    server.addEventListener("error", () => {
-      this.sessions = this.sessions.filter((s) => s !== server);
-    });
+      server.addEventListener("message", (event) => {
+        this.handleMessage(event, server);
+      });
 
-    return new Response(null, {
-      status: 101,
-      webSocket: client
-    });
+      server.addEventListener("close", () => {
+        this.sessions = this.sessions.filter((s) => s !== server);
+      });
+
+      server.addEventListener("error", () => {
+        this.sessions = this.sessions.filter((s) => s !== server);
+      });
+
+      return new Response(null, {
+        status: 101,
+        webSocket: client
+      });
+    }
+
+    return new Response("Not found", { status: 404 });
   }
 
-  handleMessage(event, sender) {
-    const msg = String(event.data ?? "");
+  async getMessages() {
+    const stored = await this.state.storage.get("messages");
+    return Array.isArray(stored) ? stored : [];
+  }
+
+  async saveMessages(messages) {
+    await this.state.storage.put("messages", messages.slice(-100));
+  }
+
+  async handleMessage(event, sender) {
+    const raw = String(event.data ?? "");
+
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = {
+        id: crypto.randomUUID(),
+        ts: new Date().toISOString(),
+        author: "Неизвестно",
+        text: raw
+      };
+    }
+
+    if (!payload.id) payload.id = crypto.randomUUID();
+    if (!payload.ts) payload.ts = new Date().toISOString();
+    if (!payload.author) payload.author = "Неизвестно";
+    if (!payload.text) payload.text = "";
+
+    const messages = await this.getMessages();
+    messages.push(payload);
+    await this.saveMessages(messages);
+
+    const outgoing = JSON.stringify(payload);
 
     for (const session of this.sessions) {
       try {
-        session.send(msg);
+        session.send(outgoing);
       } catch {
         this.sessions = this.sessions.filter((s) => s !== session);
       }
@@ -65,10 +114,15 @@ async function handleRequest(request, env) {
     });
   }
 
+  const id = env.CHAT_ROOM.idFromName("family-chat");
+  const room = env.CHAT_ROOM.get(id);
+
   if (url.pathname === "/chat") {
-    const id = env.CHAT_ROOM.idFromName("family-chat");
-    const room = env.CHAT_ROOM.get(id);
-    return room.fetch(request);
+    return room.fetch(new Request("https://room/chat", request));
+  }
+
+  if (url.pathname === "/messages") {
+    return room.fetch(new Request("https://room/messages", request));
   }
 
   return new Response("Not found", { status: 404 });
