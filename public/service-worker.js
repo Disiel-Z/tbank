@@ -1,7 +1,7 @@
 // Т-банк — Service Worker
 // Оффлайн-кэш + Web Push уведомления
 
-const CACHE = "wallet-sandbox-v2";
+const CACHE = "wallet-sandbox-v3";
 const ASSETS = [
   "./",
   "./index.html",
@@ -10,6 +10,14 @@ const ASSETS = [
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+];
+
+const NETWORK_ONLY_PATHS = [
+  "/messages",
+  "/subscribe",
+  "/subscriptions",
+  "/vapid-public-key",
+  "/health"
 ];
 
 self.addEventListener("install", (event) => {
@@ -34,8 +42,15 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
+  const url = new URL(req.url);
 
   if (req.method !== "GET") return;
+
+  // Для живых API-маршрутов никогда не используем кэш
+  if (NETWORK_ONLY_PATHS.includes(url.pathname)) {
+    event.respondWith(fetch(req));
+    return;
+  }
 
   event.respondWith(
     caches.match(req).then((cached) => {
@@ -43,8 +58,11 @@ self.addEventListener("fetch", (event) => {
 
       return fetch(req)
         .then((resp) => {
-          const copy = resp.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
+          // Кэшируем только успешные базовые ресурсы этого приложения
+          if (resp.ok && url.origin === self.location.origin) {
+            const copy = resp.clone();
+            caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
+          }
           return resp;
         })
         .catch(() => cached);
@@ -99,8 +117,7 @@ self.addEventListener("notificationclick", (event) => {
 
         if (url.origin === self.location.origin) {
           client.focus();
-          client.navigate(targetUrl);
-          return;
+          return client.navigate(targetUrl);
         }
       }
 
