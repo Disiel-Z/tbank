@@ -1,7 +1,7 @@
 // Т-банк — Service Worker
-// Оффлайн-кэш + Web Push уведомления
+// Оффлайн-кэш + Web Push уведомления + мягкое автообновление
 
-const CACHE = "wallet-sandbox-v4";
+const CACHE = "wallet-sandbox-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -37,6 +37,19 @@ self.addEventListener("activate", (event) => {
         Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
       )
       .then(() => self.clients.claim())
+      .then(async () => {
+        const clientsList = await self.clients.matchAll({
+          type: "window",
+          includeUncontrolled: true
+        });
+
+        for (const client of clientsList) {
+          client.postMessage({
+            type: "SW_UPDATED",
+            cache: CACHE
+          });
+        }
+      })
   );
 });
 
@@ -52,13 +65,33 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Для HTML всегда пробуем сеть первой, чтобы оболочка приложения обновлялась быстрее
+  if (
+    req.mode === "navigate" ||
+    req.destination === "document" ||
+    url.pathname === "/" ||
+    url.pathname.endsWith(".html")
+  ) {
+    event.respondWith(
+      fetch(req)
+        .then((resp) => {
+          if (resp.ok && url.origin === self.location.origin) {
+            const copy = resp.clone();
+            caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
+          }
+          return resp;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // Для css/js/иконок — stale-while-revalidate:
+  // сразу отдаём кэш, параллельно обновляем
   event.respondWith(
     caches.match(req).then((cached) => {
-      if (cached) return cached;
-
-      return fetch(req)
+      const networkFetch = fetch(req)
         .then((resp) => {
-          // Кэшируем только успешные базовые ресурсы этого приложения
           if (resp.ok && url.origin === self.location.origin) {
             const copy = resp.clone();
             caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
@@ -66,8 +99,16 @@ self.addEventListener("fetch", (event) => {
           return resp;
         })
         .catch(() => cached);
+
+      return cached || networkFetch;
     })
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("push", (event) => {
