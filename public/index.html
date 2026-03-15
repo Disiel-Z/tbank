@@ -59,7 +59,7 @@
       <div id="pinSetupBlock" style="display:none;">
         <div style="font-size:20px; font-weight:700; margin-bottom:8px;">Создайте PIN-код</div>
         <div style="font-size:14px; opacity:.82; margin-bottom:18px;">
-          Этот PIN будет храниться только на данном устройстве и нужен для входа в приложение.
+          Этот PIN хранится только на данном устройстве и нужен для входа в приложение.
         </div>
 
         <label style="display:block; font-size:13px; opacity:.85; margin-bottom:8px;">Новый PIN</label>
@@ -167,8 +167,28 @@
               color:#111;
             "
           >
-            Войти
+            Войти по PIN
           </button>
+
+          <button
+            id="pinBiometricBtn"
+            style="
+              display:none;
+              width:100%;
+              border:1px solid rgba(255,255,255,.14);
+              border-radius:14px;
+              padding:14px 16px;
+              font-size:15px;
+              font-weight:700;
+              cursor:pointer;
+              background: rgba(255,255,255,.08);
+              color:#fff;
+            "
+          >
+            Войти через Face ID / Touch ID
+          </button>
+
+          <div id="pinBiometricHint" style="min-height:18px; font-size:12px; opacity:.72; text-align:center;"></div>
 
           <button
             id="pinLogoutBtn"
