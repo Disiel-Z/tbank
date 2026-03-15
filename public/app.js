@@ -5,6 +5,7 @@
    - экспорт чата = только chatMessages
    - PIN хранится только локально на устройстве
    - Face ID / Touch ID в PWA реализуется через WebAuthn/passkey как локальная разблокировка
+   - чат-команда: "Перевод: 5000" => пополнение "Основного кошелька" + запись в историю
 */
 
 const STORAGE_KEY = "walletSandbox.v1";
@@ -595,8 +596,50 @@ function accountById(id) {
   return state.accounts.find((a) => a.id === id);
 }
 
+function getMainAccount() {
+  return state.accounts.find((a) => String(a.name || "").trim() === "Основной кошелёк") || null;
+}
+
 function pushActivity(entry) {
   state.activity.unshift({ id: uid(), ts: nowISO(), ...entry });
+}
+
+function parseTransferCommand(text) {
+  const value = String(text || "").trim();
+  const match = value.match(/^Перевод:\s*([0-9]+(?:[.,][0-9]+)?)\s*$/u);
+  if (!match) return null;
+
+  const amount = Number(match[1].replace(",", "."));
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  return amount;
+}
+
+function applyTransferCommandFromChat(message) {
+  const amount = parseTransferCommand(message?.text);
+  if (amount === null) return false;
+
+  const mainAccount = getMainAccount();
+  if (!mainAccount) return false;
+
+  mainAccount.balance = Number(mainAccount.balance || 0) + amount;
+
+  pushActivity({
+    type: "income",
+    title: "Поступление",
+    details: `Из чата: ${message.author || "Неизвестно"} · команда "Перевод"`,
+    amount,
+    currency: mainAccount.currency || "₽"
+  });
+
+  saveState(state);
+
+  if (route === "accounts" || route === "activity") {
+    render();
+  }
+
+  toast(`Основной кошелёк пополнен на ${fmtMoney(amount, mainAccount.currency || "₽")}`);
+  return true;
 }
 
 function escapeHtml(s) {
@@ -653,6 +696,7 @@ function ensureChatUserSelected() {
 
 function addChatMessage(msg) {
   mergeChatMessages([msg]);
+  applyTransferCommandFromChat(msg);
 
   if (route === "chat") {
     renderChatMessages();
@@ -712,6 +756,11 @@ async function loadServerChatHistory() {
     if (!Array.isArray(data)) return;
 
     mergeChatMessages(data);
+
+    for (const msg of data) {
+      applyTransferCommandFromChat(msg);
+    }
+
     chatHistoryLoaded = true;
 
     if (route === "chat") {
@@ -758,7 +807,7 @@ async function sendReadReceipt() {
       if (route === "chat") renderChatMessages();
     }
   } catch {
-    // следующая попытка будет позже
+      // следующая попытка будет позже
   } finally {
     readBusy = false;
   }
@@ -1350,7 +1399,7 @@ function renderChat() {
         </div>
 
         <div class="note">
-          В этой версии доступны два фиксированных участника: Евгения и Андрей.
+          Команда пополнения: <strong>Перевод: 5000</strong>
         </div>
       </div>
     </section>
