@@ -16,38 +16,215 @@
 </head>
 
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">ТБ</div>
-      <div class="brand-text">
-        <div class="title">Т-банк</div>
-        <div class="subtitle">Ваш мобильный банк</div>
+  <div id="pinGate" style="
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background:
+      radial-gradient(circle at top, rgba(76,201,240,.10), transparent 35%),
+      linear-gradient(180deg, #08101b 0%, #0b1320 100%);
+  ">
+    <div style="
+      width: min(420px, 100%);
+      background: rgba(255,255,255,.05);
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: 24px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.35);
+      backdrop-filter: blur(18px);
+      padding: 24px;
+      color: #fff;
+    ">
+      <div style="display:flex; align-items:center; gap:14px; margin-bottom:18px;">
+        <div style="
+          width:48px;
+          height:48px;
+          border-radius:14px;
+          display:grid;
+          place-items:center;
+          background: linear-gradient(135deg, #ffd54f, #ffb300);
+          color:#111;
+          font-weight:800;
+          font-size:20px;
+        ">ТБ</div>
+        <div>
+          <div style="font-size:22px; font-weight:800; line-height:1.2;">Т-банк</div>
+          <div style="font-size:13px; opacity:.78;">Защищённый вход в приложение</div>
+        </div>
+      </div>
+
+      <div id="pinSetupBlock" style="display:none;">
+        <div style="font-size:20px; font-weight:700; margin-bottom:8px;">Создайте PIN-код</div>
+        <div style="font-size:14px; opacity:.82; margin-bottom:18px;">
+          Этот PIN будет храниться только на данном устройстве и нужен для входа в приложение.
+        </div>
+
+        <label style="display:block; font-size:13px; opacity:.85; margin-bottom:8px;">Новый PIN</label>
+        <input
+          id="pinSetupInput"
+          type="password"
+          inputmode="numeric"
+          autocomplete="new-password"
+          placeholder="Введите 4–8 цифр"
+          style="
+            width:100%;
+            box-sizing:border-box;
+            padding:14px 16px;
+            border-radius:14px;
+            border:1px solid rgba(255,255,255,.12);
+            background: rgba(255,255,255,.06);
+            color:#fff;
+            font-size:18px;
+            outline:none;
+            margin-bottom:14px;
+          "
+        />
+
+        <label style="display:block; font-size:13px; opacity:.85; margin-bottom:8px;">Повторите PIN</label>
+        <input
+          id="pinSetupConfirmInput"
+          type="password"
+          inputmode="numeric"
+          autocomplete="new-password"
+          placeholder="Повторите PIN"
+          style="
+            width:100%;
+            box-sizing:border-box;
+            padding:14px 16px;
+            border-radius:14px;
+            border:1px solid rgba(255,255,255,.12);
+            background: rgba(255,255,255,.06);
+            color:#fff;
+            font-size:18px;
+            outline:none;
+            margin-bottom:14px;
+          "
+        />
+
+        <div id="pinSetupError" style="min-height:20px; font-size:13px; color:#ff8f8f; margin-bottom:12px;"></div>
+
+        <button
+          id="pinSetupBtn"
+          style="
+            width:100%;
+            border:0;
+            border-radius:14px;
+            padding:14px 16px;
+            font-size:16px;
+            font-weight:700;
+            cursor:pointer;
+            background: linear-gradient(135deg, #ffd54f, #ffb300);
+            color:#111;
+          "
+        >
+          Сохранить PIN
+        </button>
+      </div>
+
+      <div id="pinUnlockBlock" style="display:none;">
+        <div style="font-size:20px; font-weight:700; margin-bottom:8px;">Введите PIN</div>
+        <div style="font-size:14px; opacity:.82; margin-bottom:18px;">
+          Приложение заблокировано. Введите PIN, чтобы продолжить.
+        </div>
+
+        <input
+          id="pinUnlockInput"
+          type="password"
+          inputmode="numeric"
+          autocomplete="current-password"
+          placeholder="Введите PIN"
+          style="
+            width:100%;
+            box-sizing:border-box;
+            padding:14px 16px;
+            border-radius:14px;
+            border:1px solid rgba(255,255,255,.12);
+            background: rgba(255,255,255,.06);
+            color:#fff;
+            font-size:18px;
+            outline:none;
+            margin-bottom:14px;
+          "
+        />
+
+        <div id="pinUnlockError" style="min-height:20px; font-size:13px; color:#ff8f8f; margin-bottom:12px;"></div>
+
+        <div style="display:grid; gap:10px;">
+          <button
+            id="pinUnlockBtn"
+            style="
+              width:100%;
+              border:0;
+              border-radius:14px;
+              padding:14px 16px;
+              font-size:16px;
+              font-weight:700;
+              cursor:pointer;
+              background: linear-gradient(135deg, #ffd54f, #ffb300);
+              color:#111;
+            "
+          >
+            Войти
+          </button>
+
+          <button
+            id="pinLogoutBtn"
+            style="
+              width:100%;
+              border:1px solid rgba(255,255,255,.14);
+              border-radius:14px;
+              padding:14px 16px;
+              font-size:15px;
+              font-weight:600;
+              cursor:pointer;
+              background: rgba(255,255,255,.04);
+              color:#fff;
+            "
+          >
+            Сбросить локальный PIN
+          </button>
+        </div>
       </div>
     </div>
-    <button id="btnExport" class="btn ghost" title="Экспорт JSON">Экспорт</button>
-  </header>
+  </div>
 
-  <main id="app" class="content" aria-live="polite"></main>
+  <div id="appShell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">ТБ</div>
+        <div class="brand-text">
+          <div class="title">Т-банк</div>
+          <div class="subtitle">Ваш мобильный банк</div>
+        </div>
+      </div>
+      <button id="btnExport" class="btn ghost" title="Экспорт JSON">Экспорт</button>
+    </header>
 
-  <nav class="tabbar" aria-label="Навигация">
-    <button class="tab active" data-route="accounts">
-      <span class="tab-ico">🏦</span><span class="tab-txt">Счёта</span>
-    </button>
-    <button class="tab" data-route="transfer">
-      <span class="tab-ico">🔁</span><span class="tab-txt">Перевод</span>
-    </button>
-    <button class="tab" data-route="activity">
-      <span class="tab-ico">🧾</span><span class="tab-txt">История</span>
-    </button>
-    <button class="tab" data-route="chat">
-      <span class="tab-ico">💬</span><span class="tab-txt">Чат</span>
-    </button>
-    <button class="tab" data-route="settings">
-      <span class="tab-ico">⚙️</span><span class="tab-txt">Настройки</span>
-    </button>
-  </nav>
+    <main id="app" class="content" aria-live="polite"></main>
 
-  <input id="fileImport" type="file" accept="application/json" hidden />
+    <nav class="tabbar" aria-label="Навигация">
+      <button class="tab active" data-route="accounts">
+        <span class="tab-ico">🏦</span><span class="tab-txt">Счёта</span>
+      </button>
+      <button class="tab" data-route="transfer">
+        <span class="tab-ico">🔁</span><span class="tab-txt">Перевод</span>
+      </button>
+      <button class="tab" data-route="activity">
+        <span class="tab-ico">🧾</span><span class="tab-txt">История</span>
+      </button>
+      <button class="tab" data-route="chat">
+        <span class="tab-ico">💬</span><span class="tab-txt">Чат</span>
+      </button>
+      <button class="tab" data-route="settings">
+        <span class="tab-ico">⚙️</span><span class="tab-txt">Настройки</span>
+      </button>
+    </nav>
+
+    <input id="fileImport" type="file" accept="application/json" hidden />
+  </div>
 
   <script src="app.js"></script>
 </body>
