@@ -11,6 +11,7 @@ class ChatRoom {
     this.state = state;
     this.env = env;
     this.sessions = [];
+    this.typingState = new Map();
   }
 
   async fetch(request) {
@@ -47,7 +48,7 @@ class ChatRoom {
       this.sessions.push(server);
 
       server.addEventListener("message", (event) => {
-        this.handleMessage(event, server);
+        this.handleSocketEvent(event, server);
       });
 
       server.addEventListener("close", () => {
@@ -188,13 +189,53 @@ class ChatRoom {
     });
   }
 
-  async handleMessage(event, sender) {
+  async handleSocketEvent(event, sender) {
     const raw = String(event.data ?? "");
 
     let payload;
     try {
       payload = JSON.parse(raw);
     } catch {
+      payload = null;
+    }
+
+    if (payload?.type === "typing") {
+      await this.handleTyping(payload, sender);
+      return;
+    }
+
+    await this.handleMessagePayload(payload, raw, sender);
+  }
+
+  async handleTyping(payload, sender) {
+    const author = String(payload?.author || "").trim();
+    const isTyping = !!payload?.isTyping;
+
+    if (!author) return;
+
+    const prev = this.typingState.get(author) || false;
+    if (prev === isTyping) return;
+
+    this.typingState.set(author, isTyping);
+
+    const outgoing = JSON.stringify({
+      type: "typing",
+      author,
+      isTyping
+    });
+
+    for (const session of this.sessions) {
+      if (session === sender) continue;
+      try {
+        session.send(outgoing);
+      } catch {
+        this.sessions = this.sessions.filter((s) => s !== session);
+      }
+    }
+  }
+
+  async handleMessagePayload(payload, raw, sender) {
+    if (!payload) {
       payload = {
         id: crypto.randomUUID(),
         ts: new Date().toISOString(),
@@ -210,6 +251,8 @@ class ChatRoom {
       return;
     }
 
+    this.typingState.set(author, false);
+
     const safePayload = {
       id: String(payload.id || crypto.randomUUID()),
       ts: String(payload.ts || new Date().toISOString()),
@@ -221,6 +264,20 @@ class ChatRoom {
     const messages = await this.getMessages();
     messages.push(safePayload);
     await this.saveMessages(messages);
+
+    const typingOff = JSON.stringify({
+      type: "typing",
+      author: safePayload.author,
+      isTyping: false
+    });
+
+    for (const session of this.sessions) {
+      try {
+        session.send(typingOff);
+      } catch {
+        this.sessions = this.sessions.filter((s) => s !== session);
+      }
+    }
 
     const outgoing = JSON.stringify({
       type: "message",
