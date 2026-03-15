@@ -912,6 +912,92 @@ function renderChatMessages() {
       dateStyle: "short",
       timeStyle: "short"
     });
+
+    const mine = item.author === me;
+    const ownStatus = mine ? getOwnStatusLabel(item.status) : "";
+    const transferAmount = parseTransferCommand(item.text);
+
+    if (transferAmount !== null) {
+      const counterparty = getOtherChatUser(item.author) || "Другой пользователь";
+      const directionText = mine
+        ? `${item.author} → ${counterparty}`
+        : `${item.author} → ${me || counterparty}`;
+
+      return `
+        <div style="display:flex; ${mine ? "justify-content:flex-end;" : "justify-content:flex-start;"} margin-bottom:10px;">
+          <div class="card" style="
+            max-width:82%;
+            padding:12px 14px;
+            background:${mine ? "linear-gradient(135deg, rgba(76,201,240,.18), rgba(114,9,183,.16))" : "rgba(255,255,255,.05)"};
+            box-shadow:none;
+            border:1px solid ${mine ? "rgba(76,201,240,.28)" : "rgba(255,255,255,.10)"};
+          ">
+            <div class="small" style="margin-bottom:8px;">
+              <strong>${escapeHtml(item.author)}</strong> · ${escapeHtml(ts)}
+            </div>
+
+            <div style="
+              display:flex;
+              flex-direction:column;
+              gap:6px;
+            ">
+              <div style="
+                font-size:12px;
+                font-weight:800;
+                letter-spacing:.08em;
+                text-transform:uppercase;
+                color:${mine ? "rgba(255,255,255,.82)" : "var(--muted)"};
+              ">
+                Перевод
+              </div>
+
+              <div style="
+                font-size:24px;
+                font-weight:900;
+                line-height:1.1;
+              ">
+                ${escapeHtml(fmtMoney(transferAmount, "₽"))}
+              </div>
+
+              <div class="small" style="opacity:.92;">
+                ${escapeHtml(directionText)}
+              </div>
+            </div>
+
+            ${ownStatus ? `<div class="small" style="margin-top:8px; opacity:.85;">${escapeHtml(ownStatus)}</div>` : ""}
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div style="display:flex; ${mine ? "justify-content:flex-end;" : "justify-content:flex-start;"} margin-bottom:10px;">
+        <div class="card" style="max-width:82%; padding:10px 12px; background:${mine ? "rgba(76,201,240,.14)" : "rgba(255,255,255,.04)"}; box-shadow:none;">
+          <div class="small" style="margin-bottom:6px;"><strong>${escapeHtml(item.author)}</strong> · ${escapeHtml(ts)}</div>
+          <div style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(item.text)}</div>
+          ${ownStatus ? `<div class="small" style="margin-top:6px; opacity:.85;">${escapeHtml(ownStatus)}</div>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  list.scrollTop = list.scrollHeight;
+}
+  const list = document.getElementById("chatList");
+  if (!list) return;
+
+  if (!chatMessages.length) {
+    list.innerHTML = `<div class="note">Сообщений пока нет.</div>`;
+    return;
+  }
+
+  const me = getChatProfile();
+
+  list.innerHTML = chatMessages.map((item) => {
+    const ts = new Date(item.ts).toLocaleString("ru-RU", {
+      dateStyle: "short",
+      timeStyle: "short"
+    });
     const mine = item.author === me;
     const ownStatus = mine ? getOwnStatusLabel(item.status) : "";
 
