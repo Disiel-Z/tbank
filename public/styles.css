@@ -28,7 +28,15 @@
 }
 
 *{ box-sizing:border-box; }
-html,body{ height:100%; }
+html,body{
+  height:100%;
+  min-height:100dvh;
+  background:
+    radial-gradient(1200px 900px at 20% -20%, rgba(76,201,240,.20), transparent 55%),
+    radial-gradient(900px 800px at 110% 10%, rgba(114,9,183,.14), transparent 55%),
+    linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
+  background-color: var(--bg);
+}
 
 html{
   -webkit-tap-highlight-color: transparent;
