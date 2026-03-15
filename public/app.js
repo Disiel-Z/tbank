@@ -678,7 +678,7 @@ function applyTransferCommandFromChat(message, options = {}) {
     pushActivity({
       type: "expense",
       title: "Перевод",
-      details: `Андрею` === counterparty ? `Андрею из чата` : `${counterparty} из чата`,
+      details: `${counterparty} из чата`,
       amount,
       currency: mainAccount.currency || "₽"
     });
@@ -919,7 +919,7 @@ function renderChatMessages() {
 
     if (transferAmount !== null) {
       const counterparty = getOtherChatUser(item.author) || "Другой пользователь";
-      const directionText = mine
+      const directionText = item.author === me
         ? `${item.author} → ${counterparty}`
         : `${item.author} → ${me || counterparty}`;
 
@@ -936,11 +936,7 @@ function renderChatMessages() {
               <strong>${escapeHtml(item.author)}</strong> · ${escapeHtml(ts)}
             </div>
 
-            <div style="
-              display:flex;
-              flex-direction:column;
-              gap:6px;
-            ">
+            <div style="display:flex; flex-direction:column; gap:6px;">
               <div style="
                 font-size:12px;
                 font-weight:800;
@@ -969,37 +965,6 @@ function renderChatMessages() {
         </div>
       `;
     }
-
-    return `
-      <div style="display:flex; ${mine ? "justify-content:flex-end;" : "justify-content:flex-start;"} margin-bottom:10px;">
-        <div class="card" style="max-width:82%; padding:10px 12px; background:${mine ? "rgba(76,201,240,.14)" : "rgba(255,255,255,.04)"}; box-shadow:none;">
-          <div class="small" style="margin-bottom:6px;"><strong>${escapeHtml(item.author)}</strong> · ${escapeHtml(ts)}</div>
-          <div style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(item.text)}</div>
-          ${ownStatus ? `<div class="small" style="margin-top:6px; opacity:.85;">${escapeHtml(ownStatus)}</div>` : ""}
-        </div>
-      </div>
-    `;
-  }).join("");
-
-  list.scrollTop = list.scrollHeight;
-}
-  const list = document.getElementById("chatList");
-  if (!list) return;
-
-  if (!chatMessages.length) {
-    list.innerHTML = `<div class="note">Сообщений пока нет.</div>`;
-    return;
-  }
-
-  const me = getChatProfile();
-
-  list.innerHTML = chatMessages.map((item) => {
-    const ts = new Date(item.ts).toLocaleString("ru-RU", {
-      dateStyle: "short",
-      timeStyle: "short"
-    });
-    const mine = item.author === me;
-    const ownStatus = mine ? getOwnStatusLabel(item.status) : "";
 
     return `
       <div style="display:flex; ${mine ? "justify-content:flex-end;" : "justify-content:flex-start;"} margin-bottom:10px;">
@@ -1978,12 +1943,10 @@ if ("serviceWorker" in navigator) {
     try {
       const reg = await navigator.serviceWorker.register("./service-worker.js");
 
-      // Если новый SW уже ждёт — активируем его сразу
       if (reg.waiting) {
         reg.waiting.postMessage({ type: "SKIP_WAITING" });
       }
 
-      // Если найден новый SW — после установки просим его активироваться
       reg.addEventListener("updatefound", () => {
         const newWorker = reg.installing;
         if (!newWorker) return;
@@ -2007,7 +1970,7 @@ if ("serviceWorker" in navigator) {
 
   navigator.serviceWorker.addEventListener("message", (event) => {
     if (event.data?.type === "SW_UPDATED") {
-      // можно потом повесить красивый toast, но пока достаточно автоперезагрузки
+      // зарезервировано под toast обновления
     }
   });
 }
