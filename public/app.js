@@ -5,7 +5,9 @@
    - экспорт чата = только chatMessages
    - PIN хранится только локально на устройстве
    - Face ID / Touch ID в PWA реализуется через WebAuthn/passkey как локальная разблокировка
-   - чат-команда: "Перевод: 5000" => пополнение "Основного кошелька" + запись в историю
+   - чат-команда: "Перевод: 5000"
+     => у отправителя минус, у получателя плюс
+     => защита от повторного применения по id сообщения
 */
 
 const STORAGE_KEY = "walletSandbox.v1";
@@ -17,6 +19,8 @@ const PIN_UNLOCKED_KEY = "walletSandbox.pinUnlocked";
 const BIOMETRIC_ENABLED_KEY = "walletSandbox.biometricEnabled";
 const BIOMETRIC_CREDENTIAL_ID_KEY = "walletSandbox.biometricCredentialId";
 const BIOMETRIC_USER_ID_KEY = "walletSandbox.biometricUserId";
+
+const PROCESSED_TRANSFER_IDS_KEY = "walletSandbox.processedTransferIds.v1";
 
 const CHAT_WS_URL = "wss://tbank.samuichatgpt.workers.dev/chat";
 const CHAT_HISTORY_URL = "https://tbank.samuichatgpt.workers.dev/messages";
@@ -103,6 +107,31 @@ function loadChatMessages() {
 
 function saveChatMessages() {
   localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatMessages.slice(-200)));
+}
+
+function loadProcessedTransferIds() {
+  try {
+    const raw = localStorage.getItem(PROCESSED_TRANSFER_IDS_KEY);
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveProcessedTransferIds(ids) {
+  localStorage.setItem(PROCESSED_TRANSFER_IDS_KEY, JSON.stringify(ids.slice(-500)));
+}
+
+function hasProcessedTransfer(id) {
+  return processedTransferIds.includes(id);
+}
+
+function markTransferProcessed(id) {
+  if (!id || hasProcessedTransfer(id)) return;
+  processedTransferIds.push(id);
+  processedTransferIds = processedTransferIds.slice(-500);
+  saveProcessedTransferIds(processedTransferIds);
 }
 
 function normalizeChatMessage(msg) {
@@ -228,6 +257,7 @@ function getInitialRoute() {
 let state = loadState();
 let route = getInitialRoute();
 let chatMessages = loadChatMessages();
+let processedTransferIds = loadProcessedTransferIds();
 
 const appEl = document.getElementById("app");
 const exportBtn = document.getElementById("btnExport");
@@ -600,6 +630,11 @@ function getMainAccount() {
   return state.accounts.find((a) => String(a.name || "").trim() === "Основной кошелёк") || null;
 }
 
+function getOtherChatUser(author) {
+  if (!CHAT_USERS.includes(author)) return "";
+  return CHAT_USERS.find((name) => name !== author) || "";
+}
+
 function pushActivity(entry) {
   state.activity.unshift({ id: uid(), ts: nowISO(), ...entry });
 }
@@ -615,30 +650,71 @@ function parseTransferCommand(text) {
   return amount;
 }
 
-function applyTransferCommandFromChat(message) {
+function applyTransferCommandFromChat(message, options = {}) {
+  const silent = !!options.silent;
+
+  const messageId = String(message?.id || "").trim();
+  const author = String(message?.author || "").trim();
   const amount = parseTransferCommand(message?.text);
-  if (amount === null) return false;
+
+  if (!messageId || !author || amount === null) return false;
+  if (!CHAT_USERS.includes(author)) return false;
+  if (hasProcessedTransfer(messageId)) return false;
+
+  const me = getChatProfile();
+  if (!me) return false;
 
   const mainAccount = getMainAccount();
   if (!mainAccount) return false;
 
-  mainAccount.balance = Number(mainAccount.balance || 0) + amount;
+  const counterparty = getOtherChatUser(author);
+  if (!counterparty) return false;
 
-  pushActivity({
-    type: "income",
-    title: "Поступление",
-    details: `Из чата: ${message.author || "Неизвестно"} · команда "Перевод"`,
-    amount,
-    currency: mainAccount.currency || "₽"
-  });
+  let applied = false;
+
+  if (author === me) {
+    mainAccount.balance = Number(mainAccount.balance || 0) - amount;
+
+    pushActivity({
+      type: "expense",
+      title: "Перевод",
+      details: `Андрею` === counterparty ? `Андрею из чата` : `${counterparty} из чата`,
+      amount,
+      currency: mainAccount.currency || "₽"
+    });
+
+    applied = true;
+  } else {
+    mainAccount.balance = Number(mainAccount.balance || 0) + amount;
+
+    pushActivity({
+      type: "income",
+      title: "Перевод",
+      details: `От ${author} из чата`,
+      amount,
+      currency: mainAccount.currency || "₽"
+    });
+
+    applied = true;
+  }
+
+  if (!applied) return false;
 
   saveState(state);
+  markTransferProcessed(messageId);
 
-  if (route === "accounts" || route === "activity") {
+  if (route === "accounts" || route === "activity" || route === "transfer") {
     render();
   }
 
-  toast(`Основной кошелёк пополнен на ${fmtMoney(amount, mainAccount.currency || "₽")}`);
+  if (!silent) {
+    if (author === me) {
+      toast(`Перевод отправлен: ${fmtMoney(amount, mainAccount.currency || "₽")}`);
+    } else {
+      toast(`Получен перевод: ${fmtMoney(amount, mainAccount.currency || "₽")}`);
+    }
+  }
+
   return true;
 }
 
@@ -758,7 +834,7 @@ async function loadServerChatHistory() {
     mergeChatMessages(data);
 
     for (const msg of data) {
-      applyTransferCommandFromChat(msg);
+      applyTransferCommandFromChat(msg, { silent: true });
     }
 
     chatHistoryLoaded = true;
@@ -807,7 +883,7 @@ async function sendReadReceipt() {
       if (route === "chat") renderChatMessages();
     }
   } catch {
-      // следующая попытка будет позже
+    // следующая попытка будет позже
   } finally {
     readBusy = false;
   }
@@ -1399,7 +1475,7 @@ function renderChat() {
         </div>
 
         <div class="note">
-          Команда пополнения: <strong>Перевод: 5000</strong>
+          Команда перевода: <strong>Перевод: 5000</strong>
         </div>
       </div>
     </section>
@@ -1567,8 +1643,10 @@ function renderSettings() {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(CHAT_STORAGE_KEY);
     localStorage.removeItem(CHAT_DEVICE_USER_KEY);
+    localStorage.removeItem(PROCESSED_TRANSFER_IDS_KEY);
     state = seedState();
     chatMessages = [];
+    processedTransferIds = [];
     remoteTypingAuthor = "";
     saveChatMessages();
     updateChatTabBadge();
