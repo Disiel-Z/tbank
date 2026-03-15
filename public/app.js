@@ -4,6 +4,7 @@
    - импорт/экспорт кошелька = только state/accounts/activity
    - экспорт чата = только chatMessages
    - PIN хранится только локально на устройстве
+   - Face ID / Touch ID в PWA реализуется через WebAuthn/passkey как локальная разблокировка
 */
 
 const STORAGE_KEY = "walletSandbox.v1";
@@ -11,6 +12,10 @@ const CHAT_STORAGE_KEY = "walletSandbox.chat.v1";
 const CHAT_DEVICE_USER_KEY = "walletSandbox.chatUser";
 const PIN_CODE_KEY = "walletSandbox.pinCode";
 const PIN_UNLOCKED_KEY = "walletSandbox.pinUnlocked";
+
+const BIOMETRIC_ENABLED_KEY = "walletSandbox.biometricEnabled";
+const BIOMETRIC_CREDENTIAL_ID_KEY = "walletSandbox.biometricCredentialId";
+const BIOMETRIC_USER_ID_KEY = "walletSandbox.biometricUserId";
 
 const CHAT_WS_URL = "wss://tbank.samuichatgpt.workers.dev/chat";
 const CHAT_HISTORY_URL = "https://tbank.samuichatgpt.workers.dev/messages";
@@ -191,6 +196,8 @@ const pinUnlockInputEl = document.getElementById("pinUnlockInput");
 const pinUnlockErrorEl = document.getElementById("pinUnlockError");
 const pinUnlockBtnEl = document.getElementById("pinUnlockBtn");
 const pinLogoutBtnEl = document.getElementById("pinLogoutBtn");
+const pinBiometricBtnEl = document.getElementById("pinBiometricBtn");
+const pinBiometricHintEl = document.getElementById("pinBiometricHint");
 
 function hasPin() {
   return !!localStorage.getItem(PIN_CODE_KEY);
@@ -207,6 +214,7 @@ function setPin(pin) {
 function clearPin() {
   localStorage.removeItem(PIN_CODE_KEY);
   localStorage.removeItem(PIN_UNLOCKED_KEY);
+  clearBiometric();
 }
 
 function setPinUnlocked(value) {
@@ -222,6 +230,209 @@ function isValidPin(pin) {
   return /^\d{4,8}$/.test(pin);
 }
 
+function supportsBiometricUnlock() {
+  return !!(
+    window.isSecureContext &&
+    window.PublicKeyCredential &&
+    navigator.credentials &&
+    typeof navigator.credentials.create === "function" &&
+    typeof navigator.credentials.get === "function"
+  );
+}
+
+function getBiometricEnabled() {
+  return localStorage.getItem(BIOMETRIC_ENABLED_KEY) === "1";
+}
+
+function setBiometricEnabled(value) {
+  if (value) localStorage.setItem(BIOMETRIC_ENABLED_KEY, "1");
+  else localStorage.removeItem(BIOMETRIC_ENABLED_KEY);
+}
+
+function getBiometricCredentialId() {
+  return localStorage.getItem(BIOMETRIC_CREDENTIAL_ID_KEY) || "";
+}
+
+function setBiometricCredentialId(id) {
+  localStorage.setItem(BIOMETRIC_CREDENTIAL_ID_KEY, id);
+}
+
+function getBiometricUserId() {
+  let id = localStorage.getItem(BIOMETRIC_USER_ID_KEY);
+  if (!id) {
+    id = uid();
+    localStorage.setItem(BIOMETRIC_USER_ID_KEY, id);
+  }
+  return id;
+}
+
+function clearBiometric() {
+  localStorage.removeItem(BIOMETRIC_ENABLED_KEY);
+  localStorage.removeItem(BIOMETRIC_CREDENTIAL_ID_KEY);
+  localStorage.removeItem(BIOMETRIC_USER_ID_KEY);
+}
+
+function bufferToBase64Url(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let str = "";
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function base64UrlToUint8Array(base64url) {
+  const padding = "=".repeat((4 - (base64url.length % 4)) % 4);
+  const base64 = (base64url + padding).replaceAll("-", "+").replaceAll("_", "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+function randomChallenge(length = 32) {
+  const arr = new Uint8Array(length);
+  crypto.getRandomValues(arr);
+  return arr;
+}
+
+function getBiometricStatusText() {
+  if (!supportsBiometricUnlock()) {
+    return "Face ID / Touch ID недоступен на этом устройстве или в этом режиме.";
+  }
+  if (!hasPin()) {
+    return "Сначала нужно создать PIN.";
+  }
+  if (getBiometricEnabled() && getBiometricCredentialId()) {
+    return "Face ID / Touch ID включён для этого устройства.";
+  }
+  return "Face ID / Touch ID выключен.";
+}
+
+function updateBiometricUiState() {
+  if (!pinBiometricBtnEl || !pinBiometricHintEl) return;
+
+  const enabled = getBiometricEnabled() && !!getBiometricCredentialId();
+  const supported = supportsBiometricUnlock();
+
+  pinBiometricBtnEl.style.display = enabled && supported ? "block" : "none";
+
+  if (!supported) {
+    pinBiometricHintEl.textContent = "Биометрический вход недоступен в этом браузере или режиме.";
+  } else if (enabled) {
+    pinBiometricHintEl.textContent = "Можно войти через Face ID / Touch ID.";
+  } else {
+    pinBiometricHintEl.textContent = "";
+  }
+
+  const settingsStatus = document.getElementById("biometricStatus");
+  if (settingsStatus) {
+    settingsStatus.textContent = getBiometricStatusText();
+  }
+
+  const settingsEnableBtn = document.getElementById("btnEnableBiometric");
+  if (settingsEnableBtn) {
+    settingsEnableBtn.textContent = enabled ? "Перенастроить Face ID / Touch ID" : "Включить Face ID / Touch ID";
+    settingsEnableBtn.disabled = !supported || !hasPin();
+  }
+
+  const settingsDisableBtn = document.getElementById("btnDisableBiometric");
+  if (settingsDisableBtn) {
+    settingsDisableBtn.disabled = !(enabled && supported);
+  }
+}
+
+async function registerBiometricUnlock() {
+  if (!supportsBiometricUnlock()) {
+    throw new Error("Face ID / Touch ID недоступен");
+  }
+
+  if (!hasPin()) {
+    throw new Error("Сначала создайте PIN");
+  }
+
+  const userId = new TextEncoder().encode(getBiometricUserId());
+  const challenge = randomChallenge(32);
+
+  const credential = await navigator.credentials.create({
+    publicKey: {
+      challenge,
+      rp: {
+        name: "Т-банк"
+      },
+      user: {
+        id: userId,
+        name: "device-owner",
+        displayName: "Владелец устройства"
+      },
+      pubKeyCredParams: [
+        { type: "public-key", alg: -7 },
+        { type: "public-key", alg: -257 }
+      ],
+      authenticatorSelection: {
+        authenticatorAttachment: "platform",
+        residentKey: "preferred",
+        userVerification: "required"
+      },
+      timeout: 60000,
+      attestation: "none"
+    }
+  });
+
+  if (!credential || !credential.rawId) {
+    throw new Error("Не удалось создать биометрический ключ");
+  }
+
+  setBiometricCredentialId(bufferToBase64Url(credential.rawId));
+  setBiometricEnabled(true);
+}
+
+async function authenticateWithBiometric() {
+  if (!supportsBiometricUnlock()) {
+    throw new Error("Face ID / Touch ID недоступен");
+  }
+
+  const credentialId = getBiometricCredentialId();
+  if (!credentialId || !getBiometricEnabled()) {
+    throw new Error("Face ID / Touch ID не включён");
+  }
+
+  const challenge = randomChallenge(32);
+
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      allowCredentials: [
+        {
+          type: "public-key",
+          id: base64UrlToUint8Array(credentialId)
+        }
+      ],
+      userVerification: "required",
+      timeout: 60000
+    }
+  });
+
+  if (!assertion) {
+    throw new Error("Биометрическая проверка не выполнена");
+  }
+
+  unlockApp();
+  toast("Вход через Face ID / Touch ID выполнен");
+}
+
+async function enableBiometricUnlock() {
+  try {
+    await registerBiometricUnlock();
+    updateBiometricUiState();
+    toast("Face ID / Touch ID включён");
+  } catch (err) {
+    toast(err?.message || "Не удалось включить Face ID / Touch ID");
+  }
+}
+
+function disableBiometricUnlock() {
+  clearBiometric();
+  updateBiometricUiState();
+  toast("Face ID / Touch ID отключён");
+}
+
 function showPinSetup() {
   pinGateEl.style.display = "flex";
   appShellEl.style.visibility = "hidden";
@@ -230,6 +441,7 @@ function showPinSetup() {
   pinSetupErrorEl.textContent = "";
   pinSetupInputEl.value = "";
   pinSetupConfirmInputEl.value = "";
+  updateBiometricUiState();
   setTimeout(() => pinSetupInputEl.focus(), 0);
 }
 
@@ -240,6 +452,7 @@ function showPinUnlock() {
   pinUnlockBlockEl.style.display = "block";
   pinUnlockErrorEl.textContent = "";
   pinUnlockInputEl.value = "";
+  updateBiometricUiState();
   setTimeout(() => pinUnlockInputEl.focus(), 0);
 }
 
@@ -1117,6 +1330,16 @@ function renderSettings() {
         </div>
 
         <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
+          <div class="h2">Биометрия</div>
+          <div class="small" id="biometricStatus">${escapeHtml(getBiometricStatusText())}</div>
+          <div class="hr"></div>
+          <div class="grid two">
+            <button class="btn primary" id="btnEnableBiometric">Включить Face ID / Touch ID</button>
+            <button class="btn ghost" id="btnDisableBiometric">Отключить</button>
+          </div>
+        </div>
+
+        <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
           <div class="h2">Безопасность</div>
           <div class="small">Локальная защита PIN-кодом на этом устройстве</div>
           <div class="hr"></div>
@@ -1148,6 +1371,8 @@ function renderSettings() {
   };
 
   document.getElementById("btnEnablePushFromSettings").onclick = () => enablePushNotifications();
+  document.getElementById("btnEnableBiometric").onclick = () => enableBiometricUnlock();
+  document.getElementById("btnDisableBiometric").onclick = () => disableBiometricUnlock();
 
   document.getElementById("btnResetPin").onclick = () => {
     if (!confirm("Сбросить локальный PIN на этом устройстве?")) return;
@@ -1169,6 +1394,8 @@ function renderSettings() {
       ensureChatUserSelected();
     }, 0);
   };
+
+  updateBiometricUiState();
 }
 
 function modalAddAccount() {
@@ -1343,6 +1570,7 @@ function afterUnlockInit() {
   loadServerChatHistory();
   connectChat();
   refreshPushStatus();
+  updateBiometricUiState();
 
   setTimeout(() => {
     ensureChatUserSelected();
@@ -1355,6 +1583,11 @@ function afterUnlockInit() {
 pinSetupBtnEl.onclick = () => handlePinSetup();
 pinUnlockBtnEl.onclick = () => handlePinUnlock();
 pinLogoutBtnEl.onclick = () => handlePinReset();
+pinBiometricBtnEl.onclick = () => {
+  authenticateWithBiometric().catch((err) => {
+    toast(err?.message || "Не удалось выполнить вход через Face ID / Touch ID");
+  });
+};
 
 pinSetupInputEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") pinSetupConfirmInputEl.focus();
