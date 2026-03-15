@@ -37,6 +37,11 @@ let pushBusy = false;
 let readBusy = false;
 let appLocked = true;
 
+let typingTimer = null;
+let typingSent = false;
+let typingAuthor = "";
+let remoteTypingAuthor = "";
+
 function uid() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
 }
@@ -654,6 +659,50 @@ function addChatMessage(msg) {
   }
 }
 
+function updateTypingIndicator(author, isTyping) {
+  const me = getChatProfile();
+  if (!author || author === me) return;
+
+  remoteTypingAuthor = isTyping ? author : "";
+
+  const el = document.getElementById("typingIndicator");
+  if (!el) return;
+
+  if (remoteTypingAuthor) {
+    el.textContent = `${remoteTypingAuthor} печатает…`;
+    el.style.display = "block";
+  } else {
+    el.textContent = "";
+    el.style.display = "none";
+  }
+}
+
+function sendTypingState(isTyping) {
+  const me = getChatProfile();
+  if (!me) return;
+  if (!chatSocket || chatSocket.readyState !== WebSocket.OPEN) return;
+
+  if (typingSent === isTyping && typingAuthor === me) return;
+
+  typingSent = isTyping;
+  typingAuthor = me;
+
+  try {
+    chatSocket.send(JSON.stringify({
+      type: "typing",
+      author: me,
+      isTyping
+    }));
+  } catch {}
+}
+
+function scheduleTypingStop() {
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => {
+    sendTypingState(false);
+  }, 1200);
+}
+
 async function loadServerChatHistory() {
   try {
     const res = await fetch(CHAT_HISTORY_URL, { cache: "no-store" });
@@ -957,8 +1006,14 @@ function connectChat() {
           return;
         }
 
+        if (parsed?.type === "typing" && parsed?.author) {
+          updateTypingIndicator(parsed.author, !!parsed.isTyping);
+          return;
+        }
+
         if (parsed?.type === "message" && parsed?.text) {
           addChatMessage(parsed);
+          updateTypingIndicator(parsed.author, false);
           if (route === "chat") {
             sendReadReceipt();
           }
@@ -1029,6 +1084,10 @@ function sendChatMessage() {
     text,
     status: "sending"
   };
+
+  clearTimeout(typingTimer);
+  sendTypingState(false);
+  updateTypingIndicator(me, false);
 
   addChatMessage(payload);
   chatSocket.send(JSON.stringify(payload));
@@ -1273,6 +1332,10 @@ function renderChat() {
 
         <div id="chatList" class="card" style="background:rgba(255,255,255,.03); box-shadow:none; min-height:320px; max-height:50vh; overflow:auto;"></div>
 
+        <div id="typingIndicator" class="small" style="display:${remoteTypingAuthor ? "block" : "none"}; min-height:18px; opacity:.82; margin-top:-4px; margin-bottom:4px;">
+          ${remoteTypingAuthor ? `${escapeHtml(remoteTypingAuthor)} печатает…` : ""}
+        </div>
+
         <div>
           <label>Сообщение</label>
           <textarea id="chatInput" class="input" rows="3" placeholder="Напишите сообщение..." style="resize:vertical;"></textarea>
@@ -1319,7 +1382,26 @@ function renderChat() {
   document.getElementById("btnExportChat").onclick = () => doChatExportJSON();
   document.getElementById("btnSendChat").onclick = () => sendChatMessage();
 
-  document.getElementById("chatInput").addEventListener("keydown", (e) => {
+  const chatInput = document.getElementById("chatInput");
+  chatInput.addEventListener("input", () => {
+    const value = String(chatInput.value || "").trim();
+
+    if (!value) {
+      clearTimeout(typingTimer);
+      sendTypingState(false);
+      return;
+    }
+
+    sendTypingState(true);
+    scheduleTypingStop();
+  });
+
+  chatInput.addEventListener("blur", () => {
+    clearTimeout(typingTimer);
+    sendTypingState(false);
+  });
+
+  chatInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendChatMessage();
@@ -1438,6 +1520,7 @@ function renderSettings() {
     localStorage.removeItem(CHAT_DEVICE_USER_KEY);
     state = seedState();
     chatMessages = [];
+    remoteTypingAuthor = "";
     saveChatMessages();
     updateChatTabBadge();
     toast("Сброшено");
