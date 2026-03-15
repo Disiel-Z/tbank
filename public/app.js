@@ -3,11 +3,14 @@
    Важно:
    - импорт/экспорт кошелька = только state/accounts/activity
    - экспорт чата = только chatMessages
+   - PIN хранится только локально на устройстве
 */
 
 const STORAGE_KEY = "walletSandbox.v1";
 const CHAT_STORAGE_KEY = "walletSandbox.chat.v1";
 const CHAT_DEVICE_USER_KEY = "walletSandbox.chatUser";
+const PIN_CODE_KEY = "walletSandbox.pinCode";
+const PIN_UNLOCKED_KEY = "walletSandbox.pinUnlocked";
 
 const CHAT_WS_URL = "wss://tbank.samuichatgpt.workers.dev/chat";
 const CHAT_HISTORY_URL = "https://tbank.samuichatgpt.workers.dev/messages";
@@ -27,6 +30,7 @@ let chatHistoryLoaded = false;
 let pushStatusText = "Уведомления не настроены";
 let pushBusy = false;
 let readBusy = false;
+let appLocked = true;
 
 function uid() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
@@ -174,6 +178,142 @@ let chatMessages = loadChatMessages();
 const appEl = document.getElementById("app");
 const exportBtn = document.getElementById("btnExport");
 const fileImport = document.getElementById("fileImport");
+
+const pinGateEl = document.getElementById("pinGate");
+const appShellEl = document.getElementById("appShell");
+const pinSetupBlockEl = document.getElementById("pinSetupBlock");
+const pinUnlockBlockEl = document.getElementById("pinUnlockBlock");
+const pinSetupInputEl = document.getElementById("pinSetupInput");
+const pinSetupConfirmInputEl = document.getElementById("pinSetupConfirmInput");
+const pinSetupErrorEl = document.getElementById("pinSetupError");
+const pinSetupBtnEl = document.getElementById("pinSetupBtn");
+const pinUnlockInputEl = document.getElementById("pinUnlockInput");
+const pinUnlockErrorEl = document.getElementById("pinUnlockError");
+const pinUnlockBtnEl = document.getElementById("pinUnlockBtn");
+const pinLogoutBtnEl = document.getElementById("pinLogoutBtn");
+
+function hasPin() {
+  return !!localStorage.getItem(PIN_CODE_KEY);
+}
+
+function getPin() {
+  return localStorage.getItem(PIN_CODE_KEY) || "";
+}
+
+function setPin(pin) {
+  localStorage.setItem(PIN_CODE_KEY, pin);
+}
+
+function clearPin() {
+  localStorage.removeItem(PIN_CODE_KEY);
+  localStorage.removeItem(PIN_UNLOCKED_KEY);
+}
+
+function setPinUnlocked(value) {
+  if (value) localStorage.setItem(PIN_UNLOCKED_KEY, "1");
+  else localStorage.removeItem(PIN_UNLOCKED_KEY);
+}
+
+function isPinUnlocked() {
+  return localStorage.getItem(PIN_UNLOCKED_KEY) === "1";
+}
+
+function isValidPin(pin) {
+  return /^\d{4,8}$/.test(pin);
+}
+
+function showPinSetup() {
+  pinGateEl.style.display = "flex";
+  appShellEl.style.visibility = "hidden";
+  pinSetupBlockEl.style.display = "block";
+  pinUnlockBlockEl.style.display = "none";
+  pinSetupErrorEl.textContent = "";
+  pinSetupInputEl.value = "";
+  pinSetupConfirmInputEl.value = "";
+  setTimeout(() => pinSetupInputEl.focus(), 0);
+}
+
+function showPinUnlock() {
+  pinGateEl.style.display = "flex";
+  appShellEl.style.visibility = "hidden";
+  pinSetupBlockEl.style.display = "none";
+  pinUnlockBlockEl.style.display = "block";
+  pinUnlockErrorEl.textContent = "";
+  pinUnlockInputEl.value = "";
+  setTimeout(() => pinUnlockInputEl.focus(), 0);
+}
+
+function hidePinGate() {
+  pinGateEl.style.display = "none";
+  appShellEl.style.visibility = "visible";
+}
+
+function unlockApp() {
+  appLocked = false;
+  setPinUnlocked(true);
+  hidePinGate();
+  afterUnlockInit();
+}
+
+function lockApp() {
+  appLocked = true;
+  setPinUnlocked(false);
+  if (hasPin()) showPinUnlock();
+  else showPinSetup();
+}
+
+function initPinFlow() {
+  if (!hasPin()) {
+    showPinSetup();
+    return;
+  }
+
+  if (isPinUnlocked()) {
+    appLocked = false;
+    hidePinGate();
+    afterUnlockInit();
+    return;
+  }
+
+  showPinUnlock();
+}
+
+function handlePinSetup() {
+  const pin = String(pinSetupInputEl.value || "").trim();
+  const confirmPin = String(pinSetupConfirmInputEl.value || "").trim();
+
+  if (!isValidPin(pin)) {
+    pinSetupErrorEl.textContent = "PIN должен содержать 4–8 цифр.";
+    return;
+  }
+
+  if (pin !== confirmPin) {
+    pinSetupErrorEl.textContent = "PIN и подтверждение не совпадают.";
+    return;
+  }
+
+  setPin(pin);
+  unlockApp();
+  toast("PIN сохранён");
+}
+
+function handlePinUnlock() {
+  const pin = String(pinUnlockInputEl.value || "").trim();
+
+  if (pin !== getPin()) {
+    pinUnlockErrorEl.textContent = "Неверный PIN.";
+    pinUnlockInputEl.value = "";
+    return;
+  }
+
+  unlockApp();
+}
+
+function handlePinReset() {
+  if (!confirm("Сбросить локальный PIN на этом устройстве?")) return;
+  clearPin();
+  showPinSetup();
+}
 
 function setRoute(r) {
   route = r;
@@ -674,6 +814,8 @@ function doChatExportJSON() {
 }
 
 function render() {
+  if (appLocked) return;
+
   if (route === "accounts") renderAccounts();
   else if (route === "transfer") renderTransfer();
   else if (route === "activity") renderActivity();
@@ -975,6 +1117,13 @@ function renderSettings() {
         </div>
 
         <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
+          <div class="h2">Безопасность</div>
+          <div class="small">Локальная защита PIN-кодом на этом устройстве</div>
+          <div class="hr"></div>
+          <button class="btn danger" id="btnResetPin">Сбросить локальный PIN</button>
+        </div>
+
+        <div class="card" style="background: rgba(255,255,255,.03); box-shadow:none;">
           <div class="h2">Сброс</div>
           <div class="small">Сбросить все настройки</div>
           <div class="hr"></div>
@@ -999,6 +1148,12 @@ function renderSettings() {
   };
 
   document.getElementById("btnEnablePushFromSettings").onclick = () => enablePushNotifications();
+
+  document.getElementById("btnResetPin").onclick = () => {
+    if (!confirm("Сбросить локальный PIN на этом устройстве?")) return;
+    clearPin();
+    lockApp();
+  };
 
   document.getElementById("btnReset").onclick = () => {
     if (!confirm("Сбросить данные?")) return;
@@ -1183,6 +1338,34 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.remove(), 1400);
 }
 
+function afterUnlockInit() {
+  render();
+  loadServerChatHistory();
+  connectChat();
+  refreshPushStatus();
+
+  setTimeout(() => {
+    ensureChatUserSelected();
+    if (route === "chat") {
+      sendReadReceipt();
+    }
+  }, 0);
+}
+
+pinSetupBtnEl.onclick = () => handlePinSetup();
+pinUnlockBtnEl.onclick = () => handlePinUnlock();
+pinLogoutBtnEl.onclick = () => handlePinReset();
+
+pinSetupInputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") pinSetupConfirmInputEl.focus();
+});
+pinSetupConfirmInputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") handlePinSetup();
+});
+pinUnlockInputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") handlePinUnlock();
+});
+
 exportBtn.onclick = () => doExport();
 
 fileImport.addEventListener("change", async (e) => {
@@ -1214,6 +1397,7 @@ if ("serviceWorker" in navigator) {
 }
 
 window.addEventListener("online", () => {
+  if (appLocked) return;
   loadServerChatHistory();
   connectChat();
   refreshPushStatus();
@@ -1221,6 +1405,7 @@ window.addEventListener("online", () => {
 });
 
 window.addEventListener("focus", () => {
+  if (appLocked) return;
   if (route === "chat") {
     loadServerChatHistory().then(() => {
       sendReadReceipt();
@@ -1230,14 +1415,14 @@ window.addEventListener("focus", () => {
   refreshPushStatus();
 });
 
-render();
-loadServerChatHistory();
-connectChat();
-refreshPushStatus();
-
-setTimeout(() => {
-  ensureChatUserSelected();
-  if (route === "chat") {
-    sendReadReceipt();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    setPinUnlocked(false);
   }
-}, 0);
+});
+
+window.addEventListener("beforeunload", () => {
+  setPinUnlocked(false);
+});
+
+initPinFlow();
