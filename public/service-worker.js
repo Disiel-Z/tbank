@@ -1,7 +1,7 @@
 // Т-банк — Service Worker
 // Оффлайн-кэш + Web Push уведомления
 
-const CACHE = "wallet-sandbox-v3";
+const CACHE = "wallet-sandbox-v4";
 const ASSETS = [
   "./",
   "./index.html",
