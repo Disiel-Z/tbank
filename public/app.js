@@ -133,6 +133,7 @@ function mergeChatMessages(messages) {
     .slice(-200);
 
   saveChatMessages();
+  updateChatTabBadge();
 }
 
 function updateMessageStatus(messageId, status) {
@@ -146,6 +147,7 @@ function updateMessageStatus(messageId, status) {
 
   if (changed) {
     saveChatMessages();
+    updateChatTabBadge();
     if (route === "chat") renderChatMessages();
   }
 }
@@ -166,8 +168,49 @@ function markMessagesReadByOtherUser(reader) {
 
   if (changed) {
     saveChatMessages();
+    updateChatTabBadge();
     if (route === "chat") renderChatMessages();
   }
+}
+
+function getUnreadChatCount() {
+  const me = getChatProfile();
+  if (!me) return 0;
+  return chatMessages.filter((item) => item.author !== me && item.status !== "read").length;
+}
+
+function updateChatTabBadge() {
+  const chatTab = document.querySelector('.tab[data-route="chat"]');
+  if (!chatTab) return;
+
+  const textEl = chatTab.querySelector(".tab-txt");
+  if (!textEl) return;
+
+  const count = route === "chat" ? 0 : getUnreadChatCount();
+
+  if (count <= 0) {
+    textEl.innerHTML = "Чат";
+    return;
+  }
+
+  const safeCount = count > 99 ? "99+" : String(count);
+
+  textEl.innerHTML = `Чат <span style="
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:18px;
+    height:18px;
+    margin-left:6px;
+    padding:0 6px;
+    border-radius:999px;
+    background:linear-gradient(135deg,#ff6b6b,#ff3b30);
+    color:#fff;
+    font-size:11px;
+    font-weight:800;
+    line-height:1;
+    vertical-align:middle;
+  ">${safeCount}</span>`;
 }
 
 function getInitialRoute() {
@@ -539,6 +582,7 @@ function setRoute(r) {
   else url.searchParams.set("route", r);
   history.replaceState({}, "", url.toString());
 
+  updateChatTabBadge();
   render();
 }
 
@@ -588,6 +632,7 @@ function ensureChatUserSelected() {
   document.getElementById("pickEvgeniya").onclick = () => {
     setChatProfile("Евгения");
     closeModal();
+    updateChatTabBadge();
     render();
     toast("Устройство сохранено за пользователем: Евгения");
   };
@@ -595,6 +640,7 @@ function ensureChatUserSelected() {
   document.getElementById("pickAndrey").onclick = () => {
     setChatProfile("Андрей");
     closeModal();
+    updateChatTabBadge();
     render();
     toast("Устройство сохранено за пользователем: Андрей");
   };
@@ -659,6 +705,7 @@ async function sendReadReceipt() {
         return item;
       });
       saveChatMessages();
+      updateChatTabBadge();
       if (route === "chat") renderChatMessages();
     }
   } catch {
@@ -1248,6 +1295,7 @@ function renderChat() {
 
   updateChatStatus();
   renderChatMessages();
+  updateChatTabBadge();
 
   document.getElementById("btnChatReconnect").onclick = async () => {
     try {
@@ -1262,6 +1310,7 @@ function renderChat() {
     setChatProfile(e.target.value);
     updateChatStatus();
     renderChatMessages();
+    updateChatTabBadge();
     toast("Пользователь устройства сохранён");
     sendReadReceipt();
   });
@@ -1281,6 +1330,7 @@ function renderChat() {
     if (!confirm("Очистить локальную историю чата на этом устройстве?")) return;
     chatMessages = [];
     saveChatMessages();
+    updateChatTabBadge();
     renderChatMessages();
     toast("Локальный кеш очищен");
   };
@@ -1367,6 +1417,7 @@ function renderSettings() {
   document.getElementById("btnSaveChatProfile").onclick = () => {
     const val = document.getElementById("settingsChatProfile").value;
     setChatProfile(val);
+    updateChatTabBadge();
     toast("Пользователь устройства сохранён");
   };
 
@@ -1388,6 +1439,7 @@ function renderSettings() {
     state = seedState();
     chatMessages = [];
     saveChatMessages();
+    updateChatTabBadge();
     toast("Сброшено");
     render();
     setTimeout(() => {
@@ -1571,9 +1623,11 @@ function afterUnlockInit() {
   connectChat();
   refreshPushStatus();
   updateBiometricUiState();
+  updateChatTabBadge();
 
   setTimeout(() => {
     ensureChatUserSelected();
+    updateChatTabBadge();
     if (route === "chat") {
       sendReadReceipt();
     }
@@ -1634,6 +1688,7 @@ window.addEventListener("online", () => {
   loadServerChatHistory();
   connectChat();
   refreshPushStatus();
+  updateChatTabBadge();
   if (route === "chat") sendReadReceipt();
 });
 
@@ -1646,6 +1701,7 @@ window.addEventListener("focus", () => {
     connectChat();
   }
   refreshPushStatus();
+  updateChatTabBadge();
 });
 
 document.addEventListener("visibilitychange", () => {
